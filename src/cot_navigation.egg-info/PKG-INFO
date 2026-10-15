@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: cot-navigation
+Version: 0.1.0
+Summary: Causal Transformer protocols for DAG reachability: context graphs, parametric graphs, and four output protocols.
+Requires-Python: <3.12,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=2.1
+Requires-Dist: pyyaml>=6.0.2
+Requires-Dist: setuptools>=70
+Requires-Dist: torch==2.6.0+cu124
+Requires-Dist: tqdm>=4.67
+Requires-Dist: triton==3.2.0
+Requires-Dist: wandb>=0.19

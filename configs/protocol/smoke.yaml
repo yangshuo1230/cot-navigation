@@ -1,0 +1,3 @@
+protocol:
+  name: direct
+  budgets: [32, 64]

@@ -1,0 +1,12 @@
+includes:
+  - ../data/pilot_context.yaml
+  - ../model/base.yaml
+  - ../protocol/base.yaml
+  - ../train/pilot.yaml
+  - ../tracking/online.yaml
+  - ../runtime.yaml
+output_dir: outputs/pilot/context_direct
+protocol:
+  name: direct
+train:
+  stage: context

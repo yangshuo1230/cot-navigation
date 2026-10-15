@@ -1,0 +1,15 @@
+includes:
+  - ../data/smoke_context.yaml
+  - ../model/base.yaml
+  - ../protocol/smoke.yaml
+  - ../train/smoke.yaml
+  - ../tracking/disabled.yaml
+  - ../runtime.yaml
+output_dir: outputs/smoke/context_direct
+protocol:
+  name: direct
+train:
+  stage: context
+
+runtime:
+  smoke: true

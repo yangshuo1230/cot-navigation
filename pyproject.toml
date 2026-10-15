@@ -1,0 +1,52 @@
+[project]
+name = "cot-navigation"
+version = "0.1.0"
+description = "Causal Transformer protocols for DAG reachability: context graphs, parametric graphs, and four output protocols."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "numpy>=2.1",
+    "pyyaml>=6.0.2",
+    "setuptools>=70",
+    "torch==2.6.0+cu124",
+    "tqdm>=4.67",
+    "triton==3.2.0",
+    "wandb>=0.19",
+]
+
+[project.scripts]
+cot-nav = "cot_navigation.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+triton = { index = "pypi" }
+setuptools = { index = "pypi" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

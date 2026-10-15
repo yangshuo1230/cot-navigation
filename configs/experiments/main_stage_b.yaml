@@ -1,0 +1,8 @@
+includes:
+  - main_stage_a.yaml
+output_dir: outputs/main/parametric/balanced_seed0/stage_b_direct
+train:
+  stage: B
+  max_steps: 10000
+  effective_query_batch_size: 64
+  walk_batch_size: 16

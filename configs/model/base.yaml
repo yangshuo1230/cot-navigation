@@ -1,0 +1,15 @@
+model:
+  layers: 6
+  heads: 1
+  d_model: 128
+  d_ff: 512
+  activation: gelu
+  position_encoding: rope
+  max_seq_len: 4096
+  tie_embeddings: true
+  dropout: 0.0
+  ffn: standard
+  attn_impl: sdpa
+  compile: false
+  compile_mode: default
+  rope_base: 10000.0

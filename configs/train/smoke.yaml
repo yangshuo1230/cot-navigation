@@ -1,0 +1,27 @@
+train:
+  max_steps: 30
+  effective_query_batch_size: 8
+  walk_batch_size: 8
+  lr: 0.001
+  min_lr: 0.0001
+  warmup_steps: 2
+  betas: [0.9, 0.99]
+  weight_decay: 0.01
+  grad_clip: 1.0
+  precision: bf16
+  eval_interval: 30
+  save_interval: 15
+  log_interval: 5
+  microbatch_size: 4
+  bucket_multiple: 32
+  pin_memory: true
+  deterministic: false
+  stage: context
+  exposure_seed: 0
+  keep_last: 2
+  eval_samples: 16
+  free_gen_samples: 8
+  all_budgets_eval: false
+  model_seed: 0
+  persist_outputs: false
+  max_tokens_per_microbatch: 2048

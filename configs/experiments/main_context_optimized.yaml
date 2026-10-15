@@ -1,0 +1,11 @@
+includes:
+  - main_context.yaml
+model:
+  compile: true
+  compile_mode: default
+train:
+  max_tokens_per_microbatch: 16384
+evaluation:
+  batch_size: 8
+  seed: 1729
+  test_samples: 0
