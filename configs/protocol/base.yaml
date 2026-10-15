@@ -1,3 +1,4 @@
 protocol:
   name: direct
-  budgets: [64, 128, 256, 512, 1024, 2048]
+  # null resolves to N: 16 DOTs for context, 32 for the fixed graph.
+  filler_tokens: null

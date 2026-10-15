@@ -21,5 +21,4 @@ train:
   keep_last: 2
   eval_samples: 64
   free_gen_samples: 16
-  all_budgets_eval: false
   model_seed: 0

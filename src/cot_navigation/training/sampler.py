@@ -54,27 +54,3 @@ class IndexSampler:
         self.order = np.asarray(state["order"], dtype=np.int64)
         self.rng.bit_generator.state = state["rng"]
 
-
-class BudgetSampler:
-    def __init__(self, budgets: tuple[int, ...] | list[int], seed: int):
-        self.budgets = [int(b) for b in budgets]
-        if not self.budgets:
-            raise ValueError("budgets")
-        self.rng = Generator(PCG64(int(seed)))
-
-    def draw(self, n: int) -> list[int]:
-        picks = self.rng.integers(0, len(self.budgets), size=n)
-        return [self.budgets[int(i)] for i in picks.tolist()]
-
-    def state_dict(self) -> dict:
-        return {"rng": self.rng.bit_generator.state, "budgets": list(self.budgets)}
-
-    def load_state_dict(self, state: dict) -> None:
-        if list(state["budgets"]) != self.budgets:
-            raise ValueError("budget list changed")
-        self.rng.bit_generator.state = state["rng"]
-
-
-def eval_budget(sample_id: int, budgets: list[int]) -> int:
-    """Fixed assignment. Does not consume the training RNG."""
-    return budgets[int(sample_id) % len(budgets)]

@@ -1,7 +1,7 @@
 """Per-example losses.
 
 Shift: logits at index ``i`` predict token ``i+1``. The hidden state that
-predicts the label is the ANS position, so the label token is not an input to
+predicts the label is the preceding prefix position, so the label token is not an input to
 its own prediction. Padding and non-target tokens have mask 0 and are excluded
 before the per-example mean, so a longer microbatch does not change an
 example's weight.

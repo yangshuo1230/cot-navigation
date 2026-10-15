@@ -1,8 +1,7 @@
 """Final-answer metrics and separate trace diagnostics.
 
 A wrong trace with the right answer is correct. Format failures are wrong on
-the main metric and are also reported on their own. Budget exhaustion is not
-converted into NO.
+the main metric and are also reported on their own. Safety-limit failures are not converted into NO.
 """
 
 from __future__ import annotations
@@ -47,9 +46,9 @@ def _pack(rows: list[dict]) -> dict:
 
 
 def aggregate(rows: list[dict]) -> dict:
-    """``rows`` need correct, format_fail, label, and optional shape/distance/budget."""
+    """``rows`` need correct, format_fail, label, and optional shape/distance/filler_tokens."""
     report = {"overall": _pack(rows)}
-    for key in ("shape", "distance", "budget"):
+    for key in ("shape", "distance", "filler_tokens"):
         groups: dict = defaultdict(list)
         for row in rows:
             if key in row:
@@ -76,7 +75,7 @@ def summarize_traces(rows: list[dict]) -> dict:
     return {
         "n": n,
         "mean_correct_prefix_tokens": sum(row["correct_prefix_tokens"] for row in traced) / n,
-        "budget_exhausted_rate": sum(1 for row in traced if row.get("forced_cut")) / n,
+        "generation_limit_rate": sum(1 for row in traced if row.get("generation_limit_reached")) / n,
         "search_complete_rate": sum(1 for row in traced if row.get("search_complete")) / n,
         "completed_records": sum(int(row.get("completed_records", 0)) for row in traced),
         "completed_records_match": sum(int(row.get("completed_records_match", 0)) for row in traced),
@@ -87,7 +86,7 @@ class MetricAccumulator:
     """Keep counts rather than all predictions; batching never changes denominators."""
 
     def __init__(self):
-        self.groups = {key: defaultdict(Counter) for key in ("overall", "shape", "distance", "budget")}
+        self.groups = {key: defaultdict(Counter) for key in ("overall", "shape", "distance", "filler_tokens")}
         self.trace = Counter()
         self.fields = Counter()
 
@@ -103,7 +102,7 @@ class MetricAccumulator:
             c["yes_correct" if row["label"] == 1 else "no_correct"] += int(good)
         if "correct_prefix_tokens" in row:
             self.trace["n"] += 1
-            for field in ("correct_prefix_tokens", "forced_cut", "search_complete", "completed_records",
+            for field in ("correct_prefix_tokens", "generation_limit_reached", "search_complete", "completed_records",
                           "completed_records_match", "malformed_completed_records"):
                 self.trace[field] += int(row.get(field, 0))
             self.fields.update(row.get("field_correct", {}))
@@ -122,14 +121,14 @@ class MetricAccumulator:
 
     def result(self) -> dict:
         result = {"overall": self._finish(self.groups["overall"]["all"])}
-        for category in ("shape", "distance", "budget"):
+        for category in ("shape", "distance", "filler_tokens"):
             result[f"by_{category}"] = {k: self._finish(v) for k, v in sorted(self.groups[category].items())}
         n = self.trace["n"]
         trace = {"n": n}
         if n:
             denom = self.trace["completed_records"]
             trace.update(mean_correct_prefix_tokens=self.trace["correct_prefix_tokens"] / n,
-                         budget_exhausted_rate=self.trace["forced_cut"] / n,
+                         generation_limit_rate=self.trace["generation_limit_reached"] / n,
                          search_complete_rate=self.trace["search_complete"] / n,
                          completed_records=denom,
                          completed_records_match=self.trace["completed_records_match"],

@@ -21,7 +21,6 @@ train:
   keep_last: 2
   eval_samples: 16
   free_gen_samples: 8
-  all_budgets_eval: false
   model_seed: 0
   persist_outputs: false
   max_tokens_per_microbatch: 2048

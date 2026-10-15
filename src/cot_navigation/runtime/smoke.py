@@ -7,6 +7,7 @@ import gc
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from cot_navigation.config import ShapeSpec
 from cot_navigation.data.generate import generate_context, generate_parametric
 from cot_navigation.data.validate import validate_context, validate_parametric
 from cot_navigation.training.trainer import Trainer
@@ -25,7 +26,10 @@ def run_smoke(config, steps: int = 2) -> dict:
         root = Path(scratch)
         cfg = copy.deepcopy(config)
         cfg.runtime.smoke = True
+        cfg.model.max_seq_len = 4096
         cfg.data.root = str(root / "context")
+        cfg.data.n_nodes, cfg.data.n_edges = 16, 24
+        cfg.data.shapes = {"balanced": ShapeSpec(4, 4)}
         cfg.data.workers = 1
         cfg.data.chunk_size = 64
         n_shapes = len(cfg.data.shapes)
@@ -39,12 +43,15 @@ def run_smoke(config, steps: int = 2) -> dict:
         cfg.train.stage = "context"
         cfg.data.knowledge = "context_graph"
         cfg.evaluation.test_samples = 8
+        # Execution check only: untrained models may hit this failure guard.
+        cfg.evaluation.max_new_tokens = 64
         cfg.validate()
         generate_context(cfg.data, resume=False)
         validate_context(cfg.data)
 
         def train_one(current, name, initial=None):
             current.output_dir = str(root / "would-be-output" / name)
+            current.validate()
             trainer = Trainer(current, init_state=initial)
             metrics = trainer.fit()
             evaluation = None if current.train.stage == "A" else trainer.evaluate_split("test")["overall"]
@@ -62,6 +69,8 @@ def run_smoke(config, steps: int = 2) -> dict:
 
         parametric = copy.deepcopy(cfg)
         parametric.data.knowledge = "parametric_graph"
+        parametric.data.n_nodes, parametric.data.n_edges = 32, 48
+        parametric.data.shapes = {"balanced": ShapeSpec(8, 4)}
         parametric.data.root = str(root / "parametric")
         parametric.data.graph_seeds = (0,)
         parametric.data.graph_seed = 0

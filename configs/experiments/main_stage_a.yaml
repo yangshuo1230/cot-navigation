@@ -5,13 +5,13 @@ includes:
   - ../train/main.yaml
   - ../tracking/online.yaml
   - ../runtime.yaml
-output_dir: outputs/main/parametric/balanced_seed0/stage_a
+output_dir: outputs/first_round_v2/parametric/balanced_seed0/stage_a
 data:
   graph_shape: balanced
   graph_seed: 0
 train:
   stage: A
-  max_steps: 5000
+  max_steps: 1000
   walk_batch_size: 64
 protocol:
   name: direct

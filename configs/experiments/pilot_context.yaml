@@ -5,7 +5,7 @@ includes:
   - ../train/pilot.yaml
   - ../tracking/online.yaml
   - ../runtime.yaml
-output_dir: outputs/pilot/context_direct
+output_dir: outputs/pilot_v2/context_direct
 protocol:
   name: direct
 train:

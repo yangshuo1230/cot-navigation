@@ -1,62 +1,25 @@
-"""Versioned vocabulary.
+"""Compact symbolic vocabulary v2, incompatible with old checkpoints.
 
-Node ids are whole tokens ``<V0>`` .. ``<V255>``. They are not split by a
-natural-language BPE, and nothing is downloaded. Budget values used by any
-shipped config are part of this version; adding one changes ``VOCAB_VERSION``.
+Each node is one token. Roles come from EDGE/QUERY and fixed DFS field order;
+no graph geometry is encoded in embeddings.
 """
-
 from __future__ import annotations
-
 import hashlib
 
-VOCAB_VERSION = "v1"
-SUPPORTED_BUDGETS: tuple[int, ...] = (16, 32, 64, 128, 256, 512, 1024, 2048)
-
-_SPECIALS: tuple[str, ...] = (
-    "<PAD>",
-    "<GRAPH>",
-    "<NODES>",
-    "<EDGES>",
-    "<E>",
-    "<QUERY>",
-    "<DIRECT>",
-    "<PATH>",
-    "<DFS>",
-    "<FILLER>",
-    "<BUDGET>",
-    "<OUT>",
-    "<ANS>",
-    "<EOS>",
-    "<CUT>",
-    "<YES>",
-    "<NO>",
-    "<NONE>",
-    "<STEP>",
-    "<CUR>",
-    "<CAND>",
-    "<STACK>",
-    "<VIS>",
-    "<ACT>",
-    "<ENDSTEP>",
-    "<PUSH>",
-    "<POP>",
-    "<FOUND>",
-    "<EXHAUST>",
-    "<WALK>",
-    "<DOT>",
+VOCAB_VERSION = "v2"
+_SPECIALS = (
+    "<PAD>", "<EOS>", "<EDGE>", "<QUERY>", "|", ";",
+    "<YES>", "<NO>", "<PUSH>", "<POP>", "<FOUND>", "<EXHAUST>",
+    "<WALK>", "<DOT>",
 )
-
 
 class Tokenizer:
     def __init__(self, n_node_tokens: int = 256):
-        names = list(_SPECIALS)
-        names.extend(f"<T{budget}>" for budget in SUPPORTED_BUDGETS)
-        self.node_lo = len(names)
-        names.extend(f"<V{i}>" for i in range(n_node_tokens))
-        self.itos = names
-        self.stoi = {name: i for i, name in enumerate(names)}
-        if len(self.stoi) != len(names):
-            raise RuntimeError("duplicate token name")
+        if n_node_tokens < 1:
+            raise ValueError("n_node_tokens must be positive")
+        self.node_lo = len(_SPECIALS)
+        self.itos = list(_SPECIALS) + [f"<V{i}>" for i in range(n_node_tokens)]
+        self.stoi = {name: i for i, name in enumerate(self.itos)}
         self.pad = self.stoi["<PAD>"]
         self.yes = self.stoi["<YES>"]
         self.no = self.stoi["<NO>"]
@@ -70,8 +33,7 @@ class Tokenizer:
         return VOCAB_VERSION
 
     def hash(self) -> str:
-        payload = (VOCAB_VERSION + "\n" + "\n".join(self.itos)).encode()
-        return hashlib.sha256(payload).hexdigest()
+        return hashlib.sha256((VOCAB_VERSION + "\n" + "\n".join(self.itos)).encode()).hexdigest()
 
     def id(self, name: str) -> int:
         try:
@@ -81,11 +43,6 @@ class Tokenizer:
 
     def name(self, index: int) -> str:
         return self.itos[index]
-
-    def budget_id(self, budget: int) -> int:
-        if budget not in SUPPORTED_BUDGETS:
-            raise KeyError(f"budget {budget} is not in vocab {VOCAB_VERSION}")
-        return self.id(f"<T{budget}>")
 
     def node_id(self, raw: int) -> int:
         if not 0 <= raw < self.n_node_tokens:
@@ -97,16 +54,6 @@ class Tokenizer:
 
     def encode_tokens(self, names: list[str]) -> list[int]:
         return [self.id(name) for name in names]
-
-    def mode_id(self, protocol: str) -> int:
-        return self.id(
-            {
-                "direct": "<DIRECT>",
-                "path": "<PATH>",
-                "dfs_state": "<DFS>",
-                "filler": "<FILLER>",
-            }[protocol]
-        )
 
     def label_id(self, label: int) -> int:
         if label not in (0, 1):

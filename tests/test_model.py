@@ -123,6 +123,7 @@ class _Scripted(nn.Module):
         self.script = list(script)
         self.cursor = 0
         self.vocab = vocab
+        self.max_seq_len = 32
 
     def new_cache(self, batch, device, dtype):
         return KVCache(1, batch, 1, 32, 4, device, torch.float32)
@@ -138,20 +139,42 @@ class _Scripted(nn.Module):
         return self
 
 
-def test_budget_cutoff_does_not_force_no_and_direct_does_not_search_for_yes():
+def test_free_generation_stops_on_label_and_never_injects_answer():
     tok = Tokenizer(8)
     trace = tok.node_id(1)
-    # First sampled token is a trace token; later script slots are YES, including after forced CUT/ANS feeds.
-    model = _Scripted([trace, tok.yes, tok.yes, tok.yes, tok.yes, tok.yes], len(tok))
-    prompt = [tok.id("<QUERY>"), tok.node_id(0), tok.node_id(2), tok.mode_id("path"), tok.id("<BUDGET>"), tok.budget_id(16), tok.id("<OUT>")]
-    [result] = generate(model, [prompt], [1], "path", tok, precision="fp32")
-    assert result["forced_cut"] is True
-    assert result["pred"] == 1
-    assert result["format_fail"] is False
-    direct = _Scripted([tok.yes], len(tok))
-    [good] = generate(direct, [prompt], [16], "direct", tok, precision="fp32")
-    assert good["pred"] == 1 and not good["format_fail"]
-    assert good["generated"][0] == tok.id("<ANS>")
-    direct = _Scripted([trace], len(tok))
-    [bad] = generate(direct, [prompt], [16], "direct", tok, precision="fp32")
+    prompt = [tok.id("<QUERY>"),tok.node_id(0),tok.node_id(2),tok.id("|")]
+    [ok] = generate(_Scripted([trace,tok.yes],len(tok)),[prompt],"path",tok)
+    assert ok["generated"] == [trace,tok.yes] and ok["pred"] == 1
+    [limit] = generate(_Scripted([trace],len(tok)),[prompt],"path",tok,max_new_tokens=2)
+    assert limit["generation_limit_reached"] and limit["format_fail"] and limit["pred"] is None
+    assert limit["generated"] == [trace,trace]
+    [bad] = generate(_Scripted([trace,tok.yes],len(tok)),[prompt],"direct",tok)
     assert bad["format_fail"] and bad["pred"] is None
+    [good] = generate(_Scripted([tok.no],len(tok)),[prompt],"direct",tok)
+    assert good["generated"] == [tok.no] and good["pred"] == 0
+    [eos] = generate(_Scripted([tok.id("<EOS>"),tok.yes],len(tok)),[prompt],"dfs_state",tok)
+    assert eos["format_fail"] and eos["answer_token"] is None
+
+
+def test_filler_prefill_matches_teacher_forced_answer_without_ans():
+    tok=Tokenizer(16)
+    model=TransformerLM(len(tok),2,1,16,32,128,attn_impl="math").eval()
+    prompt=[tok.id("<QUERY>"),tok.node_id(0),tok.node_id(2),tok.id("|")]
+    prefix=prompt+[tok.id("<DOT>")]*16
+    with torch.no_grad():
+        expected=int(model(torch.tensor([prefix]))[0,-1].argmax())
+    [row]=generate(model,[prompt],"filler",tok,filler_tokens=16)
+    assert row["generated"]==[tok.id("<DOT>")]*16+[expected]
+    assert row["filler_prefill"]
+
+
+def test_mixed_prompt_lengths_can_finish_at_different_context_limits():
+    torch.manual_seed(23)
+    tok=Tokenizer(8)
+    model=TransformerLM(len(tok),2,1,16,32,32,attn_impl="math").eval()
+    prompts=[[tok.id("|")]*30,[tok.id("|")]*4]
+    batched=generate(model,prompts,"path",tok,max_new_tokens=6)
+    separate=[generate(model,[prompt],"path",tok,max_new_tokens=6)[0] for prompt in prompts]
+    for got,want in zip(batched,separate):
+        assert got["generated"]==want["generated"]
+        assert got["generation_limit_reached"]==want["generation_limit_reached"]

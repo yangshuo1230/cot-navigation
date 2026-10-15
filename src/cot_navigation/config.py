@@ -1,8 +1,7 @@
 """Typed YAML configuration.
 
-One loader, one dataclass tree. Unknown keys, illegal shapes, and budgets that
-cannot reserve an answer tail inside ``max_seq_len`` fail before any training
-step. Experiment numbers live in YAML, not in algorithm branches.
+Unknown keys and configurations that cannot fit complete reference traces
+fail before training. Experiment numbers live in YAML, not algorithm branches.
 """
 
 from __future__ import annotations
@@ -19,9 +18,7 @@ class ConfigError(ValueError):
     """Raised when a config file or override is illegal."""
 
 
-# Answer tail reserved outside the trace budget T:
-# unfinished path/DFS uses CUT + ANS + label + EOS (4 tokens).
-ANSWER_TAIL_TOKENS = 4
+ANSWER_TAIL_TOKENS = 2  # YES/NO + EOS; there is no ANS or cutoff interface.
 
 
 @dataclass
@@ -82,7 +79,8 @@ class ModelConfig:
 @dataclass
 class ProtocolConfig:
     name: str = "direct"
-    budgets: tuple[int, ...] = (64, 128, 256, 512, 1024, 2048)
+    # None means K=N. It is fixed for an experiment, never oracle-dependent.
+    filler_tokens: int | None = None
 
 
 @dataclass
@@ -111,7 +109,6 @@ class TrainConfig:
     keep_last: int = 3
     eval_samples: int = 64
     free_gen_samples: int = 16
-    all_budgets_eval: bool = False
     model_seed: int = 0
 
 
@@ -144,6 +141,9 @@ class EvaluationConfig:
     seed: int = 1729
     # 0 means the entire test split, independently of short training validation.
     test_samples: int = 0
+    # 0 uses remaining context. This is a loop guard, not a search budget:
+    # hitting it is a failure and never triggers an oracle/forced answer.
+    max_new_tokens: int = 0
 
 
 @dataclass
@@ -197,12 +197,7 @@ class AppConfig:
         if abs(sum(self.data.query_ratios) - 1.0) > 1e-6:
             raise ConfigError("query_ratios must sum to 1")
         _require(self.protocol.name in {"direct", "path", "dfs_state", "filler"}, "protocol.name")
-        _require(self.protocol.budgets and all(b > 0 for b in self.protocol.budgets), "budgets")
-        from cot_navigation.protocols.tokenizer import SUPPORTED_BUDGETS
-
-        unknown_budgets = [b for b in self.protocol.budgets if b not in SUPPORTED_BUDGETS]
-        if unknown_budgets:
-            raise ConfigError(f"budgets {unknown_budgets} are outside vocab {SUPPORTED_BUDGETS}")
+        _require(self.protocol.filler_tokens is None or self.protocol.filler_tokens > 0, "filler_tokens")
         _require(self.model.ffn in {"standard", "shared_dense"}, "model.ffn")
         if self.model.ffn not in {"standard", "shared_dense"}:
             raise ConfigError("unsupported ffn")
@@ -216,10 +211,12 @@ class AppConfig:
         if self.model.heads < 1 or self.model.layers < 1:
             raise ConfigError("layers/heads must be positive")
         _require(self.model.tie_embeddings, "this project ties embeddings; set tie_embeddings true")
+        _require(self.train.bucket_multiple >= 1, "bucket_multiple")
         worst = _worst_sequence_len(self)
+        worst = ((worst + self.train.bucket_multiple - 1) // self.train.bucket_multiple) * self.train.bucket_multiple
         if worst > self.model.max_seq_len:
             raise ConfigError(
-                f"budget overflow: prompt+T+answer tail needs {worst} tokens "
+                f"complete sequence overflow: conservative bound needs {worst} tokens "
                 f"but max_seq_len={self.model.max_seq_len}"
             )
         _require(self.train.precision in {"bf16", "fp32"}, "precision")
@@ -228,7 +225,10 @@ class AppConfig:
         _require(self.train.effective_query_batch_size >= 1, "batch")
         _require(self.train.max_steps >= 1, "max_steps")
         _require(self.train.microbatch_size >= 0 and self.train.max_tokens_per_microbatch >= 0, "microbatch limits")
-        _require(self.evaluation.batch_size >= 1 and self.evaluation.test_samples >= 0, "evaluation limits")
+        _require(self.evaluation.batch_size >= 1 and self.evaluation.test_samples >= 0
+                 and self.evaluation.max_new_tokens >= 0, "evaluation limits")
+        if self.train.stage in {"A", "B"}:
+            _require(self.train.walk_batch_size > 0, "stages A/B require a positive walk_batch_size")
         _require(self.tracking.resume in {"allow", "must", "never"}, "tracking.resume")
         _require(self.tracking.mode in {"online", "offline", "disabled"}, "tracking.mode")
         _require(self.tracking.online_failure in {"error", "offline"}, "online_failure")
@@ -249,26 +249,43 @@ def _require(cond: bool, message: str) -> None:
 
 
 def max_prompt_tokens(data: DataConfig) -> int:
-    """Upper bound matching the renderer, independent of a sampled graph.
-
-    Context prompt:
-    GRAPH NODES + N ids + EDGES + M times (E u v) + QUERY s t MODE BUDGET tok OUT
-    = N + 3M + 10.
-    Parametric prompt is QUERY s t MODE BUDGET tok OUT = 7.
-    """
+    """M*(EDGE,u,v) + QUERY,s,t,|, or only QUERY,s,t,|."""
     if data.knowledge == "context_graph":
-        return data.n_nodes + 3 * data.n_edges + 10
-    return 7
+        return 3 * data.n_edges + 4
+    return 4
+
+
+def filler_length(cfg: AppConfig) -> int:
+    return cfg.data.n_nodes if cfg.protocol.filler_tokens is None else cfg.protocol.filler_tokens
+
+
+def dfs_body_bound(data: DataConfig) -> int:
+    """Conservative full-trace bound for an adjacent-layer DAG.
+
+    <=2N-1 records, <=N^2 stack tokens, <=N(2N-1) VIS tokens.
+    Each out-neighbor is consumed once; candidate-list sum is at most
+    sum k(k+1)/2 <= M(W+1)/2. Each record has 3 separators, action, end;
+    at most N-1 PUSH arguments. No example is filtered by trace length.
+    """
+    n = data.n_nodes
+    w = max(s.width for s in data.shapes.values())
+    return n*n + n*(2*n-1) + (data.n_edges*(w+1)+1)//2 + 5*(2*n-1) + n-1
 
 
 def _worst_sequence_len(cfg: AppConfig) -> int:
+    if cfg.train.stage == "A":
+        return max(cfg.data.walk_lengths) + 3  # WALK, start, transitions, EOS
     prompt = max_prompt_tokens(cfg.data)
-    budget = max(cfg.protocol.budgets)
     if cfg.protocol.name == "direct":
-        return prompt + 3
-    if cfg.protocol.name == "filler":
-        return prompt + budget + 3
-    return prompt + budget + ANSWER_TAIL_TOKENS
+        body = 0
+    elif cfg.protocol.name == "filler":
+        body = filler_length(cfg)
+    elif cfg.protocol.name == "path":
+        body = max(s.layers for s in cfg.data.shapes.values())
+    else:
+        body = dfs_body_bound(cfg.data)
+    longest = prompt + body + ANSWER_TAIL_TOKENS
+    return max(longest, max(cfg.data.walk_lengths) + 3) if cfg.train.stage == "B" else longest
 
 
 def load_config(paths: list[str | Path], overrides: list[str] | None = None) -> AppConfig:
@@ -478,7 +495,7 @@ def _protocol_from_dict(raw: Mapping[str, Any]) -> ProtocolConfig:
         ProtocolConfig,
         raw,
         "protocol",
-        {"budgets": lambda v: _as_int_tuple(v, "protocol.budgets"), "name": str},
+        {"filler_tokens": lambda v: None if v is None else int(v), "name": str},
     )
 
 

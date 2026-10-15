@@ -40,8 +40,8 @@ def tiny_config(root: Path):
                         shapes={"balanced": ShapeSpec(8, 4)}, splits=SplitsSpec(16, 8, 8),
                         root=str(root / "data"), node_vocab=64, data_seed=7,
                         workers=1, chunk_size=8, n_walks=32, min_edge_coverage=1),
-        model=ModelConfig(layers=2, heads=1, d_model=16, d_ff=32, max_seq_len=256, attn_impl="math"),
-        protocol=ProtocolConfig(name="direct", budgets=(16,)),
+        model=ModelConfig(layers=2, heads=1, d_model=16, d_ff=32, max_seq_len=4096, attn_impl="math"),
+        protocol=ProtocolConfig(name="direct"),
         train=TrainConfig(max_steps=2, effective_query_batch_size=4, walk_batch_size=4,
                           microbatch_size=2, precision="fp32", eval_interval=0,
                           log_interval=1, bucket_multiple=8, warmup_steps=1),
@@ -57,13 +57,13 @@ def test_direct_free_answer_matches_teacher_forcing_slot(tmp_path):
     generate_context(cfg.data)
     cfg.train.persist_outputs = False
     trainer = Trainer(cfg)
-    row = trainer._render_task(0, 16)
+    row = trainer._render_task(0)
     with torch.no_grad():
         logits = trainer.raw(torch.tensor([row.tokens]))
     expected = int(logits[0, row.answer_index - 1].argmax())
-    [result] = generate(trainer.raw, [row.tokens[:row.prompt_len]], [16], "direct", trainer.tok)
+    [result] = generate(trainer.raw, [row.tokens[:row.prompt_len]], "direct", trainer.tok)
     assert result["answer_token"] == expected
-    assert result["generated"][0] == trainer.tok.id("<ANS>")
+    assert result["generated"] == [expected]
     assert row.trace_indices == []
     assert not Path(cfg.output_dir).exists()
 
@@ -152,10 +152,10 @@ def test_full_test_is_batched_independent_of_training_sample_limit(tmp_path, mon
     cfg.train.persist_outputs = False
     trainer = Trainer(cfg)
     batches = []
-    def fake(model, prompts, budgets, protocol, tok, precision):
+    def fake(model, prompts, protocol, tok, precision, **kwargs):
         batches.append(len(prompts))
-        return [{"pred": 1, "format_fail": False, "forced_cut": False,
-                 "trace_tokens": [], "tokens": p + [tok.id("<ANS>"), tok.yes]} for p in prompts]
+        return [{"pred": 1, "format_fail": False, "generation_limit_reached": False,
+                 "trace_tokens": [], "tokens": p + [tok.yes]} for p in prompts]
     monkeypatch.setattr(trainer_module, "generate", fake)
     report = trainer.evaluate_split("test")
     assert report["overall"]["n"] == cfg.data.splits.test
@@ -171,9 +171,9 @@ def test_perfect_dfs_has_correct_field_metrics(tmp_path, monkeypatch):
     cfg.protocol.name = "dfs_state"
     cfg.train.persist_outputs = False
     trainer = Trainer(cfg)
-    row = trainer._render_task(0, 16)
-    def perfect(*args):
-        return [{"pred": row.label, "format_fail": False, "forced_cut": False,
+    row = trainer._render_task(0)
+    def perfect(*args, **kwargs):
+        return [{"pred": row.label, "format_fail": False, "generation_limit_reached": False,
                  "trace_tokens": row.meta["full_body"], "tokens": row.tokens}]
     monkeypatch.setattr(trainer_module, "generate", perfect)
     report = trainer._free([row])
@@ -243,3 +243,44 @@ def test_resume_extension_preserves_original_lr_floor():
     extended.load_state_dict(state)
     assert extended.lr_at(2) == pytest.approx(.001)
     assert extended.lr_at(5) == pytest.approx(.001)
+
+
+def test_stage_a_never_loads_or_samples_queries_and_b_mixes_both(tmp_path):
+    cfg = tiny_config(tmp_path)
+    cfg.data.knowledge = "parametric_graph"
+    cfg.data.graph_shape, cfg.data.graph_seed = "balanced", 0
+    cfg.data.graph_seeds = (0,)
+    cfg.train.stage = "A"
+    cfg.train.persist_outputs = False
+    generate_parametric(cfg.data)
+    a = Trainer(cfg)
+    assert a.world.queries is None and a.world.balanced == {}
+    assert a.query_sampler is None and a.walk_sampler is not None
+    a.fit()
+    assert a.queries_seen == 0 and a.walks_seen > 0
+    b_cfg = copy.deepcopy(cfg);b_cfg.train.stage = "B"
+    with pytest.raises(TrainError, match="shared stage-A"):
+        Trainer(b_cfg)
+    b = Trainer(b_cfg,init_state=a.initial_state())
+    b.fit()
+    assert b.queries_seen == b_cfg.train.max_steps*b_cfg.train.effective_query_batch_size
+    assert b.walks_seen == b_cfg.train.max_steps*b_cfg.train.walk_batch_size
+    assert not Path(cfg.output_dir).exists()
+
+
+def test_old_checkpoint_version_is_rejected():
+    from cot_navigation.training.trainer import _check_resume
+    with pytest.raises(TrainError,match="incompatible"):
+        _check_resume({"checkpoint_version":2},{"checkpoint_version":3})
+
+
+def test_first_round_dimensions_filler_and_complete_trace_fit():
+    from cot_navigation.config import load_config, filler_length, _worst_sequence_len
+    root = Path(__file__).resolve().parents[1]
+    for base,n,m,k in [("main_context",16,24,16),("main_stage_b",32,48,32)]:
+        for mode in ("direct","path","dfs_state","filler"):
+            cfg=load_config([root/f"configs/experiments/{base}_{mode}.yaml"])
+            assert (cfg.data.n_nodes,cfg.data.n_edges)==(n,m)
+            assert filler_length(cfg)==k
+            assert _worst_sequence_len(cfg)<=4096
+            assert cfg.protocol.name==mode

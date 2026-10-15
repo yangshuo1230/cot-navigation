@@ -97,7 +97,7 @@ data:
   splits: {train: 4, val: 2, test: 2}
   root: data/x
 model: {layers: 2, heads: 1, d_model: 32, d_ff: 64, max_seq_len: 64, tie_embeddings: true}
-protocol: {name: direct, budgets: [16]}
+protocol: {name: direct}
 train: {max_steps: 1, precision: fp32, stage: context}
 tracking: {mode: disabled}
 runtime: {device: cpu}
@@ -145,7 +145,7 @@ model:
   max_seq_len: 256
   tie_embeddings: true
   attn_impl: math
-protocol: {{name: direct, budgets: [16]}}
+protocol: {{name: direct}}
 train:
   max_steps: 2
   effective_query_batch_size: 4
@@ -227,7 +227,7 @@ model:
   d_ff: 64
   max_seq_len: 256
   tie_embeddings: true
-protocol: {{name: direct, budgets: [16]}}
+protocol: {{name: direct}}
 train: {{max_steps: 1, precision: fp32, stage: A, walk_batch_size: 4}}
 tracking: {{mode: disabled}}
 runtime: {{device: cpu}}

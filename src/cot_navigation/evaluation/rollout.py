@@ -74,149 +74,92 @@ def cached_logits(model: TransformerLM, tokens: torch.Tensor, lengths: torch.Ten
     return torch.stack(columns, dim=1)
 
 
-def _decode_step(model, cache, token_ids: torch.Tensor, precision: str) -> torch.Tensor:
+def _decode_step(model, cache, token_ids: torch.Tensor, precision: str, active=None) -> torch.Tensor:
     device = token_ids.device
-    positions = cache.lengths.clone().unsqueeze(1)
+    positions = cache.lengths.clamp(max=cache.max_len - 1).unsqueeze(1)
     with _autocast(device, precision):
         logits = model(token_ids, positions=positions, cache=cache, cache_mode="decode")
-    cache.lengths += 1
+    cache.lengths += 1 if active is None else active.to(cache.lengths.dtype)
     return logits[:, 0, :]
 
 
 @torch.no_grad()
-def generate(
-    model: TransformerLM,
-    prompts: list[list[int]],
-    budgets: list[int],
-    protocol: str,
-    tok: Tokenizer,
-    precision: str = "fp32",
-) -> list[dict]:
-    """Greedy generation. The true label is not an input.
+def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
+             tok: Tokenizer, precision: str = "fp32", *, filler_tokens: int = 0,
+             max_new_tokens: int = 0) -> list[dict]:
+    """Greedy free generation; the first YES/NO terminates a response.
 
-    Path/DFS insert ``<CUT><ANS>`` once the trace body reaches ``T`` and then
-    sample one answer token. Reaching ``T`` does not itself mean NO.
+    There is no oracle length, cutoff token or forced answer. EOS before an
+    answer and exhausted context/safety limits are failures. Trace errors do
+    not veto a correct answer. Direct/Filler sample exactly one answer token.
     """
-    if protocol == "filler":
-        return _generate_filler(model, prompts, budgets, tok, precision)
-    # Direct trains only the label conditional on ANS. ANS is a fixed protocol
-    # delimiter, not an unsupervised token that the model must invent at test time.
-    input_prompts = [p + [tok.id("<ANS>")] for p in prompts] if protocol == "direct" else prompts
+    if not prompts:
+        return []
+    if protocol not in {"direct", "path", "dfs_state", "filler"}:
+        raise ValueError(protocol)
+    if protocol == "filler" and filler_tokens < 1:
+        raise ValueError("filler_tokens must be positive")
     device, dtype = _device_dtype(model, precision)
     model.eval()
-    tokens, lengths = pad_rows(input_prompts, tok.pad, device)
-    batch = len(prompts)
-    cache = model.new_cache(batch, device, dtype)
-    positions = torch.arange(tokens.shape[1], device=device).unsqueeze(0).expand(batch, -1)
+    dots = [tok.id("<DOT>")] * filler_tokens if protocol == "filler" else []
+    inputs = [prompt + dots for prompt in prompts]
+    if any(len(row) >= model.max_seq_len for row in inputs):
+        raise ValueError("prompt/filler leaves no room for an answer")
+    tokens, lengths = pad_rows(inputs, tok.pad, device)
     with _autocast(device, precision):
-        prefill_logits = model(tokens, positions=positions, cache=cache, cache_mode="prefill")
-    cache.lengths.copy_(lengths)
-    next_logits = _gather_row(prefill_logits, lengths - 1)
-    phase = ["sample_answer" if protocol == "direct" else "body" for _ in range(batch)]
-    trace_count = [0] * batch
-    traces: list[list[int]] = [[] for _ in range(batch)]
-    generated: list[list[int]] = [[tok.id("<ANS>")] if protocol == "direct" else [] for _ in range(batch)]
-    answers: list[int | None] = [None] * batch
-    forced_cut = [False] * batch
-    failed = [False] * batch
-    ans_id = tok.id("<ANS>")
-    cut_id = tok.id("<CUT>")
-    guard = 0
-    limit = max(budgets) + 6
-    while any(item != "done" for item in phase) and guard < limit:
-        guard += 1
-        feed = [tok.pad] * batch
-        need_feed = False
-        for i in range(batch):
-            if phase[i] == "done":
+        if protocol in {"direct", "filler"}:
+            logits = model(tokens)
+        else:
+            cache = model.new_cache(len(prompts), device, dtype)
+            positions = torch.arange(tokens.shape[1], device=device).expand(len(prompts), -1)
+            logits = model(tokens, positions=positions, cache=cache, cache_mode="prefill")
+            cache.lengths.copy_(lengths)
+    next_logits = _gather_row(logits, lengths - 1)
+    caps = [min(model.max_seq_len - len(p), max_new_tokens or model.max_seq_len) for p in inputs]
+    if protocol in {"direct", "filler"}:
+        caps = [1] * len(prompts)
+    generated = [list(dots) for _ in prompts]
+    traces = [list(dots) for _ in prompts]
+    answers = [None] * len(prompts)
+    active = [True] * len(prompts)
+    limits = [False] * len(prompts)
+    counts = [0] * len(prompts)
+    eos = tok.id("<EOS>")
+    while any(active):
+        # One transfer per decode step, not per row.
+        picked = next_logits.argmax(dim=-1).tolist()
+        feed = [tok.pad] * len(prompts)
+        for i in range(len(prompts)):
+            if not active[i]:
                 continue
-            if phase[i] == "sample_answer":
-                pred = int(next_logits[i].argmax().item())
-                answers[i] = pred
-                generated[i].append(pred)
-                phase[i] = "done"
-                continue
-            if phase[i] == "force_ans":
-                feed[i] = ans_id
-                generated[i].append(ans_id)
-                phase[i] = "sample_answer"
-                need_feed = True
-                continue
-            if phase[i] == "body" and trace_count[i] >= budgets[i]:
-                feed[i] = cut_id
-                generated[i].append(cut_id)
-                forced_cut[i] = True
-                phase[i] = "force_ans"
-                need_feed = True
-                continue
-            pred = int(next_logits[i].argmax().item())
+            pred = picked[i]
             generated[i].append(pred)
-            feed[i] = pred
-            need_feed = True
-            if pred == ans_id:
-                phase[i] = "sample_answer"
+            counts[i] += 1
+            if protocol in {"direct", "filler"}:
+                # Preserve the raw sampled answer for diagnostics even when
+                # it is outside YES/NO; never coerce it into a binary answer.
+                answers[i] = pred
+            if pred in (tok.yes, tok.no):
+                answers[i] = pred
+                active[i] = False
+            elif protocol in {"direct", "filler"} or pred == eos:
+                active[i] = False
             else:
                 traces[i].append(pred)
-                trace_count[i] += 1
-        if not need_feed:
-            break
-        step_tokens = torch.tensor(feed, dtype=torch.long, device=device).unsqueeze(1)
-        next_logits = _decode_step(model, cache, step_tokens, precision)
+                if counts[i] >= caps[i]:
+                    limits[i] = True
+                    active[i] = False
+                else:
+                    feed[i] = pred
+        if any(active):
+            step_tokens = torch.tensor(feed, dtype=torch.long, device=device).unsqueeze(1)
+            mask = torch.tensor(active, dtype=torch.bool, device=device)
+            next_logits = _decode_step(model, cache, step_tokens, precision, mask)
     results = []
     for i, prompt in enumerate(prompts):
-        if phase[i] != "done":
-            failed[i] = True
-        pred = None
-        if answers[i] in (tok.yes, tok.no):
-            pred = 1 if answers[i] == tok.yes else 0
-        elif answers[i] is not None:
-            failed[i] = True
-        results.append(
-            {
-                "prompt_len": len(prompt),
-                "generated": generated[i],
-                "trace_tokens": traces[i],
-                "answer_token": answers[i],
-                "pred": pred,
-                "format_fail": bool(failed[i] or pred is None),
-                "forced_cut": forced_cut[i],
-                "tokens": prompt + generated[i],
-            }
-        )
-    return results
-
-
-def _generate_filler(model, prompts, budgets, tok: Tokenizer, precision: str) -> list[dict]:
-    """One prefill of prompt + DOT*T + ANS. The DOT block is not decoded token by token."""
-    device, _dtype = _device_dtype(model, precision)
-    model.eval()
-    rows = []
-    ans_at = []
-    for prompt, budget in zip(prompts, budgets):
-        row = prompt + [tok.id("<DOT>")] * int(budget) + [tok.id("<ANS>")]
-        ans_at.append(len(row) - 1)
-        rows.append(row)
-    tokens, lengths = pad_rows(rows, tok.pad, device)
-    with _autocast(device, precision):
-        logits = model(tokens)
-    picked = _gather_row(logits, lengths - 1).argmax(dim=-1)
-    results = []
-    for i, prompt in enumerate(prompts):
-        answer = int(picked[i].item())
-        pred = 1 if answer == tok.yes else 0 if answer == tok.no else None
-        # rows already end in ANS. Append the sampled label only.
-        generated = rows[i][len(prompt) :] + [answer]
-        results.append(
-            {
-                "prompt_len": len(prompt),
-                "generated": generated,
-                "trace_tokens": [tok.id("<DOT>")] * int(budgets[i]),
-                "answer_token": answer,
-                "pred": pred,
-                "format_fail": pred is None,
-                "forced_cut": False,
-                "tokens": prompt + generated,
-                "filler_prefill": True,
-            }
-        )
+        pred = int(answers[i] == tok.yes) if answers[i] in (tok.yes, tok.no) else None
+        results.append({"prompt_len": len(prompt), "generated": generated[i],
+                        "trace_tokens": traces[i], "answer_token": answers[i], "pred": pred,
+                        "format_fail": pred is None, "generation_limit_reached": limits[i],
+                        "tokens": prompt + generated[i], "filler_prefill": protocol == "filler"})
     return results

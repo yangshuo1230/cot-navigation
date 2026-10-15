@@ -76,4 +76,8 @@ def dfs_summary(steps: list[Step]) -> dict[str, int]:
         "pops": sum(1 for step in steps if step.action == "POP"),
         "max_stack": max((len(step.stack) for step in steps), default=0),
         "found": int(steps[-1].action == "FOUND") if steps else 0,
+        "trace_tokens": sum(len(s.stack) + len(s.visited) + len(s.cands) + 5
+                            + int(s.arg is not None) for s in steps),
+        "visited_nodes": max((len(s.visited) for s in steps), default=0),
+        "branch_records": sum(len(s.cands) > 1 for s in steps),
     }

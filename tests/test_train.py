@@ -48,7 +48,7 @@ model:
   tie_embeddings: true
   attn_impl: math
   compile: false
-protocol: {{name: direct, budgets: [16]}}
+protocol: {{name: direct}}
 train:
   max_steps: {steps}
   effective_query_batch_size: 4

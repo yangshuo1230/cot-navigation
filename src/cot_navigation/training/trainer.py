@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from cot_navigation.config import AppConfig, dump_config
+from cot_navigation.config import AppConfig, dump_config, filler_length
 from cot_navigation.data.dataset import ContextStore, ParametricWorld, collate_examples
 from cot_navigation.data.shards import file_sha256
 from cot_navigation.evaluation.metrics import MetricAccumulator, prefix_length
@@ -39,7 +39,7 @@ from cot_navigation.training.checkpoint import (
     save_training_checkpoint,
 )
 from cot_navigation.training.loss import combine_losses
-from cot_navigation.training.sampler import BudgetSampler, IndexSampler, eval_budget
+from cot_navigation.training.sampler import IndexSampler
 from cot_navigation.training.schedule import WarmupCosine
 
 
@@ -80,7 +80,7 @@ def _optimizer(model, cfg, device: torch.device):
 
 def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
     return {
-        "checkpoint_version": 2,
+        "checkpoint_version": 3,
         "vocab_hash": tok.hash(),
         "vocab_size": len(tok),
         "manifest_hash": manifest_hash,
@@ -91,7 +91,7 @@ def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
         "ffn": cfg.model.ffn,
         "max_seq_len": cfg.model.max_seq_len,
         "protocol": cfg.protocol.name,
-        "budgets": list(cfg.protocol.budgets),
+        "filler_tokens": filler_length(cfg) if cfg.protocol.name == "filler" else 0,
         "lr": cfg.train.lr,
         "min_lr": cfg.train.min_lr,
         "betas": list(cfg.train.betas),
@@ -116,8 +116,8 @@ def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
 
 
 def _check_resume(saved: dict, current: dict) -> list[str]:
-    if saved.get("checkpoint_version") != 2:
-        raise TrainError("legacy checkpoint lacks strict provenance; cannot safely resume")
+    if saved.get("checkpoint_version") != 3:
+        raise TrainError("legacy checkpoint/vocabulary is incompatible with compact complete-trace training; start a new run")
     allowed = []
     for key, value in saved.items():
         if key == "max_steps":
@@ -155,6 +155,8 @@ class Trainer:
         cfg.validate()
         if sum(x is not None for x in (resume, init_from, init_state, evaluation_checkpoint)) > 1:
             raise TrainError("resume, stage initialization and evaluation checkpoint are distinct operations")
+        if cfg.train.stage == "B" and all(x is None for x in (resume, init_from, init_state, evaluation_checkpoint)):
+            raise TrainError("stage B requires a shared stage-A checkpoint via init_from/init_state, or resume")
         self.cfg = cfg
         self.persist = cfg.train.persist_outputs
         self.out = Path(cfg.output_dir)
@@ -228,7 +230,7 @@ class Trainer:
         if cfg.data.graph_shape is None or cfg.data.graph_seed is None:
             raise TrainError("parametric training requires data.graph_shape and data.graph_seed")
         world = Path(cfg.data.root) / f"{cfg.data.graph_shape}-seed{cfg.data.graph_seed}"
-        self.world = ParametricWorld(world)
+        self.world = ParametricWorld(world, include_queries=cfg.train.stage != "A")
         if cfg.train.stage == "A":
             self.train_ids = np.arange(self.world.n_walks(), dtype=np.int64)
             self.val_ids = np.zeros(0, dtype=np.int64)
@@ -244,7 +246,6 @@ class Trainer:
         stage = self.cfg.train.stage
         self.query_sampler = None
         self.walk_sampler = None
-        self.budget_sampler = BudgetSampler(self.cfg.protocol.budgets, seed + 5)
         if stage == "A":
             self.walk_sampler = IndexSampler(len(self.train_ids), self.cfg.train.walk_batch_size, seed + 17)
         elif stage == "B":
@@ -286,6 +287,8 @@ class Trainer:
     def _load_evaluation(self, path: str) -> None:
         blob = load_checkpoint(path, map_location="cpu")
         self._compatible_model(blob)
+        if blob["arch"].get("filler_tokens") != self.snapshot["filler_tokens"]:
+            raise TrainError("evaluation filler length does not match checkpoint")
         if blob["arch"]["protocol"] != self.cfg.protocol.name:
             raise TrainError("evaluation protocol does not match checkpoint")
         if self.world is not None and blob["arch"]["manifest_hash"] != self.manifest_hash:
@@ -309,7 +312,6 @@ class Trainer:
             self.query_sampler.load_state_dict(blob["query_sampler"])
         if self.walk_sampler is not None:
             self.walk_sampler.load_state_dict(blob["walk_sampler"])
-        self.budget_sampler.load_state_dict(blob["budget_sampler"])
         restore_rng(blob["rng"])
         self.completed = int(blob["step"])
         self.run_id = blob["wandb_run_id"]
@@ -351,18 +353,26 @@ class Trainer:
         np.random.random()
         torch.rand((), device="cpu")
 
-    def _render_task(self, index: int, budget: int):
-        key = ("task", int(index), int(budget), self.cfg.protocol.name)
+    def _render_task(self, index: int):
+        key = ("task", int(index), self.cfg.protocol.name, filler_length(self.cfg))
         cached = self.render_cache.get(key)
         if cached is not None:
             return cached
         if self.store is not None:
-            rendered = self.store.render(int(index), self.cfg.protocol.name, int(budget), self.tok)
+            rendered = self.store.render(int(index), self.cfg.protocol.name, self.tok, filler_tokens=filler_length(self.cfg))
         else:
-            rendered = self.world.render_query(int(index), self.cfg.protocol.name, int(budget), self.tok)
+            rendered = self.world.render_query(int(index), self.cfg.protocol.name, self.tok, filler_tokens=filler_length(self.cfg))
+        self._check_length(rendered)
         if len(self.render_cache) < 8192:
             self.render_cache[key] = rendered
         return rendered
+
+    def _check_length(self, rendered) -> None:
+        multiple = self.cfg.train.bucket_multiple
+        padded = ((len(rendered.tokens) + multiple - 1) // multiple) * multiple
+        if padded > self.cfg.model.max_seq_len:
+            raise TrainError(f"complete example needs {padded} padded tokens, exceeding context "
+                             f"{self.cfg.model.max_seq_len}; no samples were truncated")
 
     def _render_walk(self, index: int):
         key = ("walk", int(index))
@@ -370,6 +380,7 @@ class Trainer:
         if cached is not None:
             return cached
         rendered = self.world.render_walk(int(index), self.tok)
+        self._check_length(rendered)
         if len(self.render_cache) < 8192:
             self.render_cache[key] = rendered
         return rendered
@@ -383,9 +394,8 @@ class Trainer:
         n_walk = 0
         if self.query_sampler is not None:
             local = self.query_sampler.next()
-            budgets = self.budget_sampler.draw(len(local))
             global_ids = [int(self.train_ids[i]) for i in local]
-            task_rows = [self._render_task(i, b) for i, b in zip(global_ids, budgets)]
+            task_rows = [self._render_task(i) for i in global_ids]
             n_task = len(task_rows)
         if self.walk_sampler is not None:
             local = self.walk_sampler.next()
@@ -475,7 +485,7 @@ class Trainer:
         self.model.eval()
         limit = self.cfg.train.eval_samples if kind == "teacher_forced" else self.cfg.train.free_gen_samples
         chosen = self._selected_ids("val", limit)
-        rows = (self._render_task(i, eval_budget(i, list(self.cfg.protocol.budgets))) for i in chosen)
+        rows = (self._render_task(i) for i in chosen)
         if kind == "teacher_forced":
             packed = self._teacher_forced(rows)
         else:
@@ -512,13 +522,7 @@ class Trainer:
         if self.cfg.train.stage == "A":
             raise TrainError("stage A has no query evaluation")
         ids = self._selected_ids(split, self.cfg.evaluation.test_samples)
-        budgets = list(self.cfg.protocol.budgets) if self.cfg.train.all_budgets_eval else None
-        def rows():
-            for index in ids:
-                chosen = budgets if budgets is not None else [eval_budget(index, list(self.cfg.protocol.budgets))]
-                for budget in chosen:
-                    yield self._render_task(index, budget)
-        report = self._free(rows())
+        report = self._free(self._render_task(index) for index in ids)
         report["unique_queries"] = len(ids)
         report["evaluation_batch_size"] = self.cfg.evaluation.batch_size
         if self.persist:
@@ -543,7 +547,7 @@ class Trainer:
                 accumulator.update({"correct": token == self.tok.label_id(row.label),
                                     "format_fail": token not in (self.tok.yes, self.tok.no),
                                     "label": row.label, "shape": row.meta.get("shape"),
-                                    "distance": row.meta.get("distance"), "budget": row.budget})
+                                    "distance": row.meta.get("distance"), "filler_tokens": row.filler_tokens})
         return {**accumulator.result(), "source": "teacher_forced"}
 
     def _free(self, rows) -> dict:
@@ -552,20 +556,21 @@ class Trainer:
         iterator = iter(rows)
         while chunk := list(islice(iterator, self.cfg.evaluation.batch_size)):
             prompts = [row.tokens[:row.prompt_len] for row in chunk]
-            budgets = [row.budget for row in chunk]
             with torch.no_grad():
-                generated = generate(self.raw, prompts, budgets, self.cfg.protocol.name, self.tok, self.cfg.train.precision)
+                generated = generate(self.raw, prompts, self.cfg.protocol.name, self.tok, self.cfg.train.precision,
+                                     filler_tokens=filler_length(self.cfg),
+                                     max_new_tokens=self.cfg.evaluation.max_new_tokens)
             for row, gen in zip(chunk, generated):
                 item = {"correct": gen["pred"] == row.label and not gen["format_fail"],
                         "format_fail": gen["format_fail"], "label": row.label, "shape": row.meta.get("shape"),
-                        "distance": row.meta.get("distance"), "budget": row.budget, "forced_cut": gen["forced_cut"]}
+                        "distance": row.meta.get("distance"), "filler_tokens": row.filler_tokens, "generation_limit_reached": gen["generation_limit_reached"]}
                 if self.cfg.protocol.name == "dfs_state":
                     reference = row.meta["full_body"]
                     item["correct_prefix_tokens"] = prefix_length(gen["trace_tokens"], reference)
-                    item["search_complete"] = (not gen["forced_cut"]) and gen["trace_tokens"] == reference
+                    item["search_complete"] = (not gen["generation_limit_reached"]) and gen["trace_tokens"] == reference
                     parsed = parse_completed_steps(gen["trace_tokens"], self.tok)
                     comparison = compare_completed(row.meta["reference_steps"], parsed, row.meta["node_token"])
-                    malformed = max(0, gen["trace_tokens"].count(self.tok.id("<ENDSTEP>")) - len(parsed))
+                    malformed = max(0, gen["trace_tokens"].count(self.tok.id(";")) - len(parsed))
                     item.update(completed_records=len(parsed) + malformed,
                                 malformed_completed_records=malformed,
                                 completed_records_match=comparison["matched_records"],
@@ -590,7 +595,6 @@ class Trainer:
             "rng": capture_rng(),
             "query_sampler": None if self.query_sampler is None else self.query_sampler.state_dict(),
             "walk_sampler": None if self.walk_sampler is None else self.walk_sampler.state_dict(),
-            "budget_sampler": self.budget_sampler.state_dict(),
             "arch": self.snapshot,
             "wandb_run_id": self.run_id,
             "parent_run_id": self.parent_run_id,
