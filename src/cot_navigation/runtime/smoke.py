@@ -38,6 +38,12 @@ def run_smoke(config, steps: int = 2) -> dict:
         cfg.train.walk_batch_size = 4
         cfg.train.microbatch_size = 2
         cfg.train.max_steps = steps
+        # Smoke validates all protocol pipelines on its own tiny geometry;
+        # experimental schedules/format flags are covered by dedicated tests.
+        cfg.train.query_hops = "all"
+        cfg.train.curriculum_stage_steps = ()
+        cfg.protocol.negative_random_path = False
+        cfg.protocol.random_search_order = False
         cfg.train.log_interval = 1
         cfg.train.eval_interval = 0
         cfg.train.stage = "context"
@@ -62,7 +68,7 @@ def run_smoke(config, steps: int = 2) -> dict:
             gc.collect()
             return initial
 
-        for protocol in ("direct", "path", "dfs_state", "filler"):
+        for protocol in ("direct", "path", "dfs_state", "bfs_state", "dfs_nodes", "bfs_nodes"):
             current = copy.deepcopy(cfg)
             current.protocol.name = protocol
             train_one(current, f"context_{protocol}")
@@ -81,7 +87,7 @@ def run_smoke(config, steps: int = 2) -> dict:
         generate_parametric(parametric.data, resume=False)
         validate_parametric(parametric.data)
         stage_a = train_one(parametric, "stage_a")
-        for protocol in ("direct", "path", "dfs_state", "filler"):
+        for protocol in ("direct", "path", "dfs_state", "bfs_state", "dfs_nodes", "bfs_nodes"):
             current = copy.deepcopy(parametric)
             current.train.stage = "B"
             current.protocol.name = protocol

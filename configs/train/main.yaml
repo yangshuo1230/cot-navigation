@@ -9,7 +9,7 @@ train:
   weight_decay: 0.01
   grad_clip: 1.0
   precision: bf16
-  eval_interval: 250
+  eval_interval: 1000
   save_interval: 1000
   log_interval: 10
   microbatch_size: 0

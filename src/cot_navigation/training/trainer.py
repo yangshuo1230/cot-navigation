@@ -2,8 +2,8 @@
 
 ``step`` counts optimizer updates, not microbatches. Microbatch losses are
 divided by the logical query count and the logical walk count, so splitting a
-batch or a walk set does not change example weight. Stage B adds the two
-already-normalized means with weight 1. Evaluation uses its own forwards and
+batch or a walk set does not change example weight. Stage B can use fixed,
+EMA-balanced, or no WALK supervision. Evaluation uses its own forwards and
 does not draw training RNGs.
 """
 
@@ -22,6 +22,7 @@ import torch
 
 from cot_navigation.config import AppConfig, dump_config, filler_length
 from cot_navigation.data.dataset import ContextStore, ParametricWorld, collate_examples
+from cot_navigation.data.prepared import PreparedRows
 from cot_navigation.data.shards import file_sha256
 from cot_navigation.evaluation.metrics import MetricAccumulator, prefix_length
 from cot_navigation.evaluation.sampling import stratified_ids
@@ -39,7 +40,8 @@ from cot_navigation.training.checkpoint import (
     save_training_checkpoint,
 )
 from cot_navigation.training.loss import combine_losses
-from cot_navigation.training.sampler import IndexSampler
+from cot_navigation.training.sampler import FixedQuerySampler, IndexSampler, HopCurriculumSampler
+from cot_navigation.training.augmentation import transform
 from cot_navigation.training.schedule import WarmupCosine
 
 
@@ -80,7 +82,7 @@ def _optimizer(model, cfg, device: torch.device):
 
 def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
     return {
-        "checkpoint_version": 3,
+        "checkpoint_version": 4 if cfg.data.knowledge == "parametric_graph" else 3,
         "vocab_hash": tok.hash(),
         "vocab_size": len(tok),
         "manifest_hash": manifest_hash,
@@ -112,12 +114,34 @@ def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
         "exposure_seed": cfg.train.exposure_seed,
         "warmup_steps": cfg.train.warmup_steps,
         "grad_clip": cfg.train.grad_clip,
+        "fixed_query_pool": cfg.train.fixed_query_pool,
+        "balance_query_labels": cfg.train.balance_query_labels,
+        "one_hop_fraction": cfg.train.one_hop_fraction,
+        "selection_metric": cfg.evaluation.selection_metric,
+        "fixed_query_view": cfg.evaluation.fixed_query_view,
+        "shuffle_context_edges": cfg.train.shuffle_context_edges,
+        "query_hops": cfg.train.query_hops,
+        "curriculum_stage_steps": list(cfg.train.curriculum_stage_steps),
+        "walk_loss_mode": cfg.train.walk_loss_mode,
+        "walk_loss_weight": cfg.train.walk_loss_weight,
+        "walk_balance_decay": cfg.train.walk_balance_decay,
+        "negative_random_path": cfg.protocol.negative_random_path,
+        "random_search_order": cfg.protocol.random_search_order,
     }
 
 
 def _check_resume(saved: dict, current: dict) -> list[str]:
-    if saved.get("checkpoint_version") != 3:
-        raise TrainError("legacy checkpoint/vocabulary is incompatible with compact complete-trace training; start a new run")
+    # Old runs remain resumable only with their original sampling/eval defaults.
+    for key, default in {"fixed_query_pool": "balanced", "balance_query_labels": False,
+                         "one_hop_fraction": 0.0, "selection_metric": "answer_accuracy",
+                         "fixed_query_view": "balanced", "shuffle_context_edges": False,
+                         "query_hops": "all", "curriculum_stage_steps": [],
+                         "walk_loss_mode": "fixed", "walk_loss_weight": 1.0,
+                         "walk_balance_decay": 0.98, "negative_random_path": False,
+                         "random_search_order": False}.items():
+        saved.setdefault(key, default)
+    if saved.get("checkpoint_version") != current["checkpoint_version"]:
+        raise TrainError("legacy checkpoint is incompatible with this data/path sampling version; start a new run")
     allowed = []
     for key, value in saved.items():
         if key == "max_steps":
@@ -175,6 +199,8 @@ class Trainer:
         self.store = None
         self.world = None
         self._load_data()
+        self.render_cache: dict = {}
+        self._preload_training_rows()
         self.manifest_hash = self.store.fingerprint if self.store is not None else self.world.fingerprint
         torch.manual_seed(cfg.train.model_seed)
         np.random.seed(cfg.train.model_seed)
@@ -190,8 +216,8 @@ class Trainer:
         self.queries_seen = 0
         self.walks_seen = 0
         self.tokens_seen = 0
+        self.loss_balance_ema = None
         self._init_samplers()
-        self.render_cache: dict = {}
         if init_from and resume:
             raise TrainError("stage init-from and resume are different operations; pass only one")
         if init_from:
@@ -225,6 +251,8 @@ class Trainer:
         if cfg.data.knowledge == "context_graph":
             self.store = ContextStore(cfg.data.root)
             self.train_ids = self.store.indices("train")
+            if cfg.train.query_hops == "one_hop":
+                self.train_ids = self.train_ids[self.store.arrays["distance"][self.train_ids] == 1]
             self.val_ids = self.store.indices("val")
             return
         if cfg.data.graph_shape is None or cfg.data.graph_seed is None:
@@ -235,24 +263,78 @@ class Trainer:
             self.train_ids = np.arange(self.world.n_walks(), dtype=np.int64)
             self.val_ids = np.zeros(0, dtype=np.int64)
             return
-        ids = self.world.balanced["train"]
+        ids = self.world.indices("train", "multi_hop" if cfg.train.fixed_query_pool == "full" else "balanced")
+        if cfg.train.one_hop_fraction > 0 or cfg.train.query_hops != "all":
+            ids = np.concatenate([ids, self.world.indices("train", "one_hop")])
+        if cfg.train.query_hops == "one_hop":
+            ids = ids[self.world.queries["distance"][ids] == 1]
         if ids.size == 0:
             raise TrainError(f"balanced train query pool is empty in {world}")
         self.train_ids = ids.astype(np.int64)
-        self.val_ids = self.world.balanced["val"].astype(np.int64)
+        self.val_ids = self.world.indices("val", cfg.evaluation.fixed_query_view)
 
     def _init_samplers(self) -> None:
         seed = self.cfg.train.exposure_seed
         stage = self.cfg.train.stage
         self.query_sampler = None
         self.walk_sampler = None
+        # Independent streams: adding a trace augmentation cannot change query,
+        # walk, positive-path, or edge-presentation exposure in another branch.
+        self.augmentation_rngs = {name: np.random.default_rng(seed + offset) for name, offset in
+                                 (("edges", 701), ("search", 709), ("negative", 719))}
+        # Path choices must not change query/walk exposure across protocols.
+        self.path_rng = (np.random.default_rng(seed + 29)
+                         if stage == "B" and self.cfg.protocol.name == "path" else None)
         if stage == "A":
             self.walk_sampler = IndexSampler(len(self.train_ids), self.cfg.train.walk_batch_size, seed + 17)
         elif stage == "B":
-            self.query_sampler = IndexSampler(len(self.train_ids), self.cfg.train.effective_query_batch_size, seed + 3)
-            self.walk_sampler = IndexSampler(self.world.n_walks(), self.cfg.train.walk_batch_size, seed + 17)
+            if self.cfg.train.query_hops != "all":
+                self.query_sampler = self._hop_sampler(self.world.queries)
+            elif self.cfg.train.one_hop_fraction > 0 or self.cfg.train.balance_query_labels:
+                self.query_sampler = FixedQuerySampler(
+                    self.world.queries["distance"][self.train_ids], self.world.queries["label"][self.train_ids],
+                    self.cfg.train.effective_query_batch_size, seed + 3,
+                    self.cfg.train.one_hop_fraction, self.cfg.train.balance_query_labels)
+            else:
+                self.query_sampler = IndexSampler(len(self.train_ids), self.cfg.train.effective_query_batch_size, seed + 3)
+            if self.cfg.train.walk_loss_mode != "none":
+                self.walk_sampler = IndexSampler(self.world.n_walks(), self.cfg.train.walk_batch_size, seed + 17)
         else:
-            self.query_sampler = IndexSampler(len(self.train_ids), self.cfg.train.effective_query_batch_size, seed + 3)
+            self.query_sampler = (self._hop_sampler(self.store.arrays) if self.cfg.train.query_hops != "all"
+                                  else IndexSampler(len(self.train_ids), self.cfg.train.effective_query_batch_size, seed + 3))
+
+    def _hop_sampler(self, arrays):
+        stages = (self.cfg.train.max_steps,) if self.cfg.train.query_hops == "one_hop" else self.cfg.train.curriculum_stage_steps
+        return HopCurriculumSampler(arrays["distance"][self.train_ids], arrays["label"][self.train_ids],
+                                    self.cfg.train.effective_query_batch_size, self.cfg.train.exposure_seed+3, stages)
+
+    def _preload_training_rows(self) -> None:
+        """Pay token loading/conversion once, before model/GPU initialization.
+
+        Raw-only datasets remain usable: render once at startup. Formal data
+        preparation supplies persisted tokens, so no DFS is needed here.
+        Neither path draws training RNGs or prepares held-out supervision.
+        Online experiments transform these immutable rows after sampling.
+        """
+        self.prepared_tasks = self.prepared_walks = None
+        source = self.store if self.store is not None else self.world
+        if self.cfg.train.stage != "A":
+            try:
+                self.prepared_tasks = PreparedRows(source, self.cfg.protocol.name, self.tok, filler_length(self.cfg))
+            except FileNotFoundError:
+                pass
+            for index in self.train_ids:
+                variants = (max(1, self.world.path_count(int(index)))
+                            if self.world is not None and self.cfg.protocol.name == "path" else 1)
+                for path_index in range(variants):
+                    self._render_task(int(index), path_index=path_index)
+        if self.world is not None and (self.cfg.train.stage == "A" or self.cfg.train.walk_loss_mode != "none"):
+            try:
+                self.prepared_walks = PreparedRows(source, "walk", self.tok)
+            except FileNotFoundError:
+                pass
+            for index in range(self.world.n_walks()):
+                self._render_walk(index)
 
     def _load_init(self, path: str) -> None:
         blob = load_checkpoint(path, map_location="cpu")
@@ -295,6 +377,7 @@ class Trainer:
             raise TrainError("evaluation fixed world does not match checkpoint")
         self.raw.load_state_dict(blob["model"])
         self.parent_run_id = blob.get("wandb_run_id")
+        self.completed = int(blob["step"])
 
     def _load_resume(self, path: str) -> None:
         blob = load_checkpoint(path, map_location="cpu")
@@ -312,6 +395,13 @@ class Trainer:
             self.query_sampler.load_state_dict(blob["query_sampler"])
         if self.walk_sampler is not None:
             self.walk_sampler.load_state_dict(blob["walk_sampler"])
+        if self.path_rng is not None:
+            self.path_rng.bit_generator.state = blob["path_rng"]
+        for name, rng in self.augmentation_rngs.items():
+            if name in blob.get("augmentation_rngs", {}):
+                rng.bit_generator.state = blob["augmentation_rngs"][name]
+        if blob.get("loss_balance_ema") is not None:
+            self.loss_balance_ema = [v.to(self.device) for v in blob["loss_balance_ema"]]
         restore_rng(blob["rng"])
         self.completed = int(blob["step"])
         self.run_id = blob["wandb_run_id"]
@@ -343,6 +433,8 @@ class Trainer:
             if cfg.train.save_interval and self.completed % cfg.train.save_interval == 0:
                 self._save()
         self._save()
+        if self.persist and cfg.train.stage != "A" and cfg.evaluation.final_checkpoints:
+            self._evaluate_final_checkpoints()
         self.tracker.finish()
         return last_metrics
 
@@ -353,18 +445,57 @@ class Trainer:
         np.random.random()
         torch.rand((), device="cpu")
 
-    def _render_task(self, index: int):
-        key = ("task", int(index), self.cfg.protocol.name, filler_length(self.cfg))
+    def _training_task(self, index: int):
+        """Sample a route within a sampled training query, never across queries."""
+        path_index = 0
+        if self.path_rng is not None:
+            if int(self.world.queries["split"][index]) != 0:
+                raise TrainError("held-out queries cannot be sampled for training")
+            count = self.world.path_count(index)
+            if count:
+                path_index = int(self.path_rng.integers(count))
+        row = self._render_task(index, path_index=path_index)
+        cfg = self.cfg
+        edges = self.augmentation_rngs["edges"] if cfg.train.shuffle_context_edges and self.store is not None else None
+        search = self.augmentation_rngs["search"] if cfg.protocol.random_search_order else None
+        negative = self.augmentation_rngs["negative"] if cfg.protocol.negative_random_path and row.label == 0 else None
+        if edges is not None or search is not None or negative is not None:
+            adj, nodes, src, dst = self._graph_fields(index)
+            row = transform(row, cfg.protocol.name, self.tok, adj, nodes, src, dst,
+                            edge_rng=edges, search_rng=search, negative_rng=negative)
+            self._check_length(row)
+        return row
+
+    def _graph_fields(self, index):
+        if self.store is not None:
+            arrays = self.store.arrays
+            return (self.store.adj(index), self.store.node_vocab_ids(index, self.tok),
+                    int(arrays["s_topo"][index]), int(arrays["t_topo"][index]))
+        # A fixed world's adjacency and vocabulary mapping never change.
+        if not hasattr(self, "_fixed_graph_fields"):
+            self._fixed_graph_fields = self.world.adj(), self.world.node_vocab_ids(self.tok)
+        adj, nodes = self._fixed_graph_fields
+        return adj, nodes, int(self.world.queries["s_topo"][index]), int(self.world.queries["t_topo"][index])
+
+    def _render_task(self, index: int, *, path_index: int = 0):
+        # Validation uses path zero and never draws from the training RNG.
+        key = ("task", int(index), self.cfg.protocol.name, filler_length(self.cfg), path_index)
         cached = self.render_cache.get(key)
         if cached is not None:
             return cached
-        if self.store is not None:
+        if getattr(self, "prepared_tasks", None) is not None:
+            rendered = self.prepared_tasks.row(int(index), path_index)
+        elif self.store is not None:
             rendered = self.store.render(int(index), self.cfg.protocol.name, self.tok, filler_tokens=filler_length(self.cfg))
         else:
-            rendered = self.world.render_query(int(index), self.cfg.protocol.name, self.tok, filler_tokens=filler_length(self.cfg))
+            rendered = self.world.render_query(int(index), self.cfg.protocol.name, self.tok,
+                                               filler_tokens=filler_length(self.cfg), path_index=path_index)
+        if self.cfg.protocol.negative_random_path and rendered.label == 0:
+            adj, nodes, src, dst = self._graph_fields(index)
+            rendered = transform(rendered, "path", self.tok, adj, nodes, src, dst,
+                                 negative_rng=np.random.default_rng(self.cfg.evaluation.seed + index))
         self._check_length(rendered)
-        if len(self.render_cache) < 8192:
-            self.render_cache[key] = rendered
+        self.render_cache[key] = rendered
         return rendered
 
     def _check_length(self, rendered) -> None:
@@ -379,10 +510,10 @@ class Trainer:
         cached = self.render_cache.get(key)
         if cached is not None:
             return cached
-        rendered = self.world.render_walk(int(index), self.tok)
+        rendered = (self.prepared_walks.row(int(index)) if getattr(self, "prepared_walks", None) is not None
+                    else self.world.render_walk(int(index), self.tok))
         self._check_length(rendered)
-        if len(self.render_cache) < 8192:
-            self.render_cache[key] = rendered
+        self.render_cache[key] = rendered
         return rendered
 
     def _update(self, collect_metrics: bool = True) -> dict:
@@ -395,7 +526,7 @@ class Trainer:
         if self.query_sampler is not None:
             local = self.query_sampler.next()
             global_ids = [int(self.train_ids[i]) for i in local]
-            task_rows = [self._render_task(i) for i in global_ids]
+            task_rows = [self._training_task(i) for i in global_ids]
             n_task = len(task_rows)
         if self.walk_sampler is not None:
             local = self.walk_sampler.next()
@@ -414,6 +545,14 @@ class Trainer:
             torch.cuda.synchronize()
         step_t0 = time.perf_counter()
         parts_list = []
+        balancing = cfg.train.stage == "B" and cfg.train.walk_loss_mode == "balanced"
+        walk_weight = cfg.train.walk_loss_weight if cfg.train.stage == "B" else 1.0
+        if balancing and self.loss_balance_ema is not None:
+            # Previous-update EMA: one detached coefficient for the whole logical
+            # batch. No second forward and no per-microbatch reweighting.
+            walk_weight = (self.loss_balance_ema[0] / self.loss_balance_ema[1].clamp_min(1e-12)).clamp(max=100).detach()
+        task_value = torch.zeros((), device=self.device)
+        walk_value = torch.zeros((), device=self.device)
         real_tokens = 0
         pad_tokens = 0
         for rows in task_chunks + walk_chunks:
@@ -435,8 +574,12 @@ class Trainer:
                 batch["walk_mask"],
                 n_task=n_task,
                 n_walk=n_walk,
+                walk_weight=walk_weight,
             )
             parts["total_loss"].backward()
+            if balancing:
+                task_value += (parts["answer"].detach().sum() + parts["trace"].detach().sum()) / max(n_task, 1)
+                walk_value += parts["walk"].detach().sum() / max(n_walk, 1)
             if collect_metrics:
                 saved = {k: parts[k].detach() for k in ("answer", "trace", "walk", "has_answer", "has_trace", "has_walk")}
                 saved["backward_total"] = parts["total_loss"].detach()
@@ -444,6 +587,13 @@ class Trainer:
         grad_norm = torch.nn.utils.clip_grad_norm_(self.raw.parameters(), cfg.train.grad_clip, error_if_nonfinite=True)
         self.opt.step()
         self.schedule.step()
+        if balancing:
+            if self.loss_balance_ema is None:
+                self.loss_balance_ema = [task_value, walk_value]
+            else:
+                decay = cfg.train.walk_balance_decay
+                for average, value in zip(self.loss_balance_ema, (task_value, walk_value)):
+                    average.mul_(decay).add_(value, alpha=1-decay)
         if collect_metrics and self.device.type == "cuda":
             torch.cuda.synchronize()
         step_s = time.perf_counter() - step_t0
@@ -454,6 +604,18 @@ class Trainer:
             return {"lr": lr}
         metrics = _reduce_logged(parts_list, n_task, n_walk)
         metrics["total_loss"] = float(sum(item["backward_total"] for item in parts_list))
+        if n_task:
+            metrics["task_loss"] = metrics["answer_loss"] + metrics.get("trace_loss", 0.0)
+            distances = (self.store.arrays if self.store is not None else self.world.queries)["distance"]
+            for hop in np.unique(distances[global_ids]):
+                metrics[f"train_hops/{int(hop)}_fraction"] = float(np.mean(distances[global_ids] == hop))
+            if isinstance(self.query_sampler, HopCurriculumSampler):
+                # .step already points at the next batch; report the stage used.
+                metrics["curriculum_stage"] = int(np.searchsorted(self.query_sampler.ends, self.query_sampler.step-1, side="right"))+1
+        if n_walk and n_task:
+            metrics["walk_weight"] = float(walk_weight)
+            metrics["weighted_walk_loss"] = float(walk_weight) * metrics["walk_loss"]
+            metrics["walk_loss_share"] = metrics["weighted_walk_loss"] / max(metrics["task_loss"]+metrics["weighted_walk_loss"], 1e-12)
         total = metrics.get("total_loss")
         if total is None or not math.isfinite(total):
             raise TrainError(f"non-finite loss at step {self.completed + 1}: {metrics}")
@@ -499,38 +661,70 @@ class Trainer:
         self.tracker.log(self.completed, flat)
         # Gold traces can disclose the answer. Only free-rollout final answers
         # select the main best checkpoint; teacher forcing is diagnostic.
-        if kind == "free" and packed["overall"].get("answer_accuracy", -1) > self.best_score:
-            self.best_score = float(packed["overall"]["answer_accuracy"])
+        score = packed["overall"].get(self.cfg.evaluation.selection_metric)
+        if kind == "free" and score is not None and score > self.best_score:
+            self.best_score = float(score)
             if self.persist:
                 save_best(self.out / "checkpoints", self._payload())
         self.raw.train()
         self.model.train()
 
-    def _selected_ids(self, split: str, limit: int) -> list[int]:
+    def _selected_ids(self, split: str, limit: int, query_view: str | None = None) -> list[int]:
         if self.store is not None:
             ids = self.store.indices(split)
             arrays = self.store.arrays
+            if self.cfg.train.query_hops == "one_hop":
+                ids = ids[arrays["distance"][ids] == 1]
             shapes = arrays["shape_id"]
         else:
-            ids = self.world.balanced[split]
+            ids = self.world.indices(split, query_view or self.cfg.evaluation.fixed_query_view)
             arrays = self.world.queries
             shapes = np.zeros(len(arrays["label"]), dtype=np.int8)
         return stratified_ids(ids, shapes, arrays["distance"], arrays["label"], limit, self.cfg.evaluation.seed)
 
-    def evaluate_split(self, split: str) -> dict:
+    def evaluate_split(self, split: str, *, query_view: str | None = None,
+                       checkpoint_tag: str | None = None, checkpoint_step: int | None = None) -> dict:
         """Free-generation eval. Does not draw the training samplers."""
         if self.cfg.train.stage == "A":
             raise TrainError("stage A has no query evaluation")
-        ids = self._selected_ids(split, self.cfg.evaluation.test_samples)
-        report = self._free(self._render_task(index) for index in ids)
+        ids = self._selected_ids(split, self.cfg.evaluation.test_samples, query_view)
+        rows = (self._render_task(index) for index in ids)
+        report = (self._free(rows, record_name=f"{split}_{checkpoint_tag}") if checkpoint_tag
+                  else self._free(rows))
         report["unique_queries"] = len(ids)
         report["evaluation_batch_size"] = self.cfg.evaluation.batch_size
+        report["query_view"] = query_view or self.cfg.evaluation.fixed_query_view
+        report["checkpoint_step"] = self.completed if checkpoint_step is None else checkpoint_step
+        report["training_step"] = self.completed
+        if checkpoint_tag:
+            report["checkpoint_tag"] = checkpoint_tag
         if self.persist:
-            path = self.out / "eval" / f"free_{split}.json"
+            suffix = f"_{checkpoint_tag}" if checkpoint_tag else ""
+            path = self.out / "eval" / f"free_{split}{suffix}.json"
             path.parent.mkdir(exist_ok=True)
             path.write_text(json.dumps(report, indent=2) + "\n")
-        self.tracker.log(self.completed, {f"test/{k}": v for k, v in _flatten_numbers(report).items()})
+        prefix = f"{split}/{checkpoint_tag}" if checkpoint_tag else split
+        self.tracker.log(self.completed, {f"{prefix}/{k}": v for k, v in _flatten_numbers(report).items()})
         return report
+
+    def _evaluate_final_checkpoints(self):
+        """Select on val, test once, and retain last weights and optimizer state.
+
+        Reports are tagged so best/last scores never overwrite each other.
+        Test metrics cannot select a checkpoint or affect training samplers.
+        """
+        tags = tuple(dict.fromkeys(self.cfg.evaluation.final_checkpoints))
+        try:
+            for tag in tags:
+                path = self.out / "checkpoints" / ("latest.pt" if tag == "last" else "best.pt")
+                if not path.exists():
+                    raise TrainError(f"missing {tag} checkpoint for final evaluation; enable free validation/save")
+                blob = load_checkpoint(path, map_location="cpu")
+                self.raw.load_state_dict(blob["model"])
+                self.evaluate_split("test", checkpoint_tag=tag, checkpoint_step=int(blob["step"]))
+        finally:
+            latest = load_checkpoint(self.out / "checkpoints/latest.pt", map_location="cpu")
+            self.raw.load_state_dict(latest["model"])
 
     def _teacher_forced(self, rows) -> dict:
         accumulator = MetricAccumulator()
@@ -550,9 +744,14 @@ class Trainer:
                                     "distance": row.meta.get("distance"), "filler_tokens": row.filler_tokens})
         return {**accumulator.result(), "source": "teacher_forced"}
 
-    def _free(self, rows) -> dict:
+    def _free(self, rows, *, record_name: str | None = None) -> dict:
         accumulator = MetricAccumulator()
         preview = []
+        predictions = None
+        if self.persist and record_name:
+            (self.out / "eval").mkdir(exist_ok=True)
+            predictions = self.out / "eval" / f"predictions_{record_name}.jsonl"
+            predictions.write_text("")
         iterator = iter(rows)
         while chunk := list(islice(iterator, self.cfg.evaluation.batch_size)):
             prompts = [row.tokens[:row.prompt_len] for row in chunk]
@@ -564,23 +763,40 @@ class Trainer:
                 item = {"correct": gen["pred"] == row.label and not gen["format_fail"],
                         "format_fail": gen["format_fail"], "label": row.label, "shape": row.meta.get("shape"),
                         "distance": row.meta.get("distance"), "filler_tokens": row.filler_tokens, "generation_limit_reached": gen["generation_limit_reached"]}
-                if self.cfg.protocol.name == "dfs_state":
-                    reference = row.meta["full_body"]
+                if self.cfg.protocol.name in {"dfs_state", "bfs_state"}:
+                    reference = row.tokens[row.prompt_len:row.answer_index]
                     item["correct_prefix_tokens"] = prefix_length(gen["trace_tokens"], reference)
                     item["search_complete"] = (not gen["generation_limit_reached"]) and gen["trace_tokens"] == reference
-                    parsed = parse_completed_steps(gen["trace_tokens"], self.tok)
-                    comparison = compare_completed(row.meta["reference_steps"], parsed, row.meta["node_token"])
+                    parsed = parse_completed_steps(gen["trace_tokens"], self.tok, fifo=self.cfg.protocol.name == "bfs_state")
+                    # Search state is diagnostic-only. Offline caches persist
+                    # tokens, not Python DFS objects for every training row.
+                    meta = row.meta
+                    if "reference_steps" not in meta:
+                        index = int(meta["index"])
+                        full = (self.store.render(index, self.cfg.protocol.name, self.tok) if self.store is not None
+                                else self.world.render_query(index, self.cfg.protocol.name, self.tok))
+                        meta = full.meta
+                    comparison = compare_completed(meta["reference_steps"], parsed, meta["node_token"])
                     malformed = max(0, gen["trace_tokens"].count(self.tok.id(";")) - len(parsed))
                     item.update(completed_records=len(parsed) + malformed,
                                 malformed_completed_records=malformed,
                                 completed_records_match=comparison["matched_records"],
                                 field_correct=comparison["field_correct"])
                 accumulator.update(item)
+                if predictions is not None:
+                    # Full-test rows permit paired comparisons across methods;
+                    # token traces are previewed separately, not copied en masse.
+                    record = {"query_id": int(row.meta["index"]), "pred": gen["pred"],
+                              **{k: v for k, v in item.items() if k in (
+                                  "correct", "format_fail", "label", "shape", "distance")}}
+                    with predictions.open("a") as handle:
+                        handle.write(json.dumps(record) + "\n")
                 if self.persist and len(preview) < 4:
                     preview.append(self.tok.decode(gen["tokens"]))
         if self.persist:
             (self.out / "traces").mkdir(exist_ok=True)
-            (self.out / "traces" / f"free_{self.completed:08d}.txt").write_text("\n\n".join(preview) + "\n")
+            suffix = record_name or f"{self.completed:08d}"
+            (self.out / "traces" / f"free_{suffix}.txt").write_text("\n\n".join(preview) + "\n")
         report = accumulator.result()
         report["source"] = "free_generation"
         report["filler_prefill"] = self.cfg.protocol.name == "filler"
@@ -595,6 +811,9 @@ class Trainer:
             "rng": capture_rng(),
             "query_sampler": None if self.query_sampler is None else self.query_sampler.state_dict(),
             "walk_sampler": None if self.walk_sampler is None else self.walk_sampler.state_dict(),
+            "path_rng": None if self.path_rng is None else self.path_rng.bit_generator.state,
+            "augmentation_rngs": {k: rng.bit_generator.state for k, rng in self.augmentation_rngs.items()},
+            "loss_balance_ema": self.loss_balance_ema,
             "arch": self.snapshot,
             "wandb_run_id": self.run_id,
             "parent_run_id": self.parent_run_id,

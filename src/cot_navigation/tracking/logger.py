@@ -14,6 +14,44 @@ from pathlib import Path
 from cot_navigation.config import AppConfig, to_plain
 
 
+def task_name(cfg: AppConfig) -> str:
+    """Stable W&B job types; the batch name remains in ``group``."""
+    if cfg.data.knowledge == "context_graph":
+        return "context_navigation"
+    return "fixed_knowledge" if cfg.train.stage == "A" else "fixed_navigation"
+
+
+def visible_metrics(cfg: AppConfig) -> tuple[str, ...]:
+    """Only these metrics create charts automatically on a run page."""
+    if task_name(cfg) == "fixed_knowledge":
+        return ("walk_loss", "lr")
+    keys = ["answer_loss", "free/overall/answer_accuracy"]
+    if cfg.evaluation.selection_metric == "balanced_accuracy":
+        keys.append("free/overall/balanced_accuracy")
+    if cfg.protocol.name in {"path", "dfs_state", "bfs_state", "dfs_nodes", "bfs_nodes"}:
+        keys.append("trace_loss")
+    if cfg.protocol.name in {"dfs_state", "bfs_state"}:
+        keys.append("free/trace/search_complete_rate")
+    if task_name(cfg) == "fixed_navigation":
+        keys.append("walk_loss")
+        if cfg.train.walk_loss_mode == "balanced":
+            keys.extend(("task_loss", "weighted_walk_loss", "walk_loss_share", "walk_weight"))
+    return tuple(keys)
+
+
+# Kept online for spot checks without generating more default charts. Detailed
+# per-distance, per-shape and DFS-field diagnostics stay in metrics.jsonl.
+ONLINE_DIAGNOSTICS = frozenset({
+    "lr", "grad_norm", "teacher_forced/overall/answer_accuracy",
+    "free/overall/yes_recall", "free/overall/no_recall",
+    "test/overall/answer_accuracy", "test/overall/yes_recall", "test/overall/no_recall",
+    "test/best/overall/answer_accuracy", "test/best/overall/balanced_accuracy",
+    "test/last/overall/answer_accuracy", "test/last/overall/balanced_accuracy",
+    "free/overall/balanced_accuracy",
+    "task_loss", "weighted_walk_loss", "walk_loss_share", "walk_weight", "curriculum_stage",
+})
+
+
 def _scrub(value):
     if isinstance(value, dict):
         cleaned = {}
@@ -62,6 +100,7 @@ class Tracker:
                 entity=cfg.tracking.entity or os.environ.get("WANDB_ENTITY") or None,
                 name=cfg.tracking.name,
                 group=cfg.tracking.group,
+                job_type=task_name(cfg),
                 tags=list(cfg.tracking.tags),
                 notes=cfg.tracking.notes,
                 id=run_id,
@@ -78,6 +117,8 @@ class Tracker:
                     project=cfg.tracking.project,
                     entity=cfg.tracking.entity,
                     name=cfg.tracking.name,
+                    group=cfg.tracking.group,
+                    job_type=task_name(cfg),
                     id=run_id,
                     resume=cfg.tracking.resume if resume else "never",
                     mode="offline",
@@ -93,8 +134,10 @@ class Tracker:
                 )
         # The SDK owns its monotonically increasing history step. Several log
         # events may share one optimizer update without overwriting each other.
-        self.run.define_metric("optimizer_step")
-        self.run.define_metric("*", step_metric="optimizer_step")
+        self.run.define_metric("optimizer_step", hidden=True)
+        self.run.define_metric("*", step_metric="optimizer_step", hidden=True)
+        for key in visible_metrics(cfg):
+            self.run.define_metric(key, step_metric="optimizer_step", hidden=False)
         (Path(cfg.output_dir) / "wandb_status.json").write_text(
             json.dumps(
                 {
@@ -122,7 +165,11 @@ class Tracker:
             with self.path.open("a") as handle:
                 handle.write(json.dumps(row) + "\n")
         if self.run is not None:
-            self.run.log(row, commit=True)
+            allowed = set(visible_metrics(self.cfg)) | ONLINE_DIAGNOSTICS
+            online = {key: value for key, value in row.items() if key in allowed or key.startswith((
+                "train_hops/", "free/by_distance/", "test/best/by_distance/", "test/last/by_distance/"))}
+            if online:
+                self.run.log({"optimizer_step": int(step), **online}, commit=True)
 
     def finish(self) -> None:
         if self.closed:

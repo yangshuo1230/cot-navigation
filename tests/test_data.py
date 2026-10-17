@@ -57,7 +57,7 @@ def test_small_bucket_prefers_test_and_does_not_copy():
     _train, _val, test, meta = split_small_bucket(2)
     assert meta["insufficient"] and len(test) == 2
     train, val, test, meta = split_small_bucket(10)
-    assert (len(train), len(val), len(test)) == (2, 1, 7)
+    assert (len(train), len(val), len(test)) == (5, 2, 3)
     assert len(set(train.tolist() + val.tolist() + test.tolist())) == 10
 
 

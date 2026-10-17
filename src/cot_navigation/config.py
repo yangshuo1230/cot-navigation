@@ -52,10 +52,16 @@ class DataConfig:
     min_edge_coverage: int = 100
     n_walks: int = 50000
     walk_lengths: tuple[int, ...] = (1, 2, 3, 4)
-    query_ratios: tuple[float, float, float] = (0.2, 0.1, 0.7)
+    query_ratios: tuple[float, float, float] = (0.5, 0.2, 0.3)
+    max_prepared_paths: int = 1_000_000
+    max_prepared_path_nodes: int = 20_000_000
     # Parametric training must name exactly one world. Generation ignores these.
     graph_shape: str | None = None
     graph_seed: int | None = None
+    # Append all adjacent-layer pairs to train without changing multi-hop splits.
+    include_one_hop_queries: bool = False
+    # Generate held-out graphs before train so size sweeps share exact holdouts.
+    context_holdout_first: bool = False
 
 
 @dataclass
@@ -81,6 +87,8 @@ class ProtocolConfig:
     name: str = "direct"
     # None means K=N. It is fixed for an experiment, never oracle-dependent.
     filler_tokens: int | None = None
+    negative_random_path: bool = False
+    random_search_order: bool = False  # resample neighbor order per training exposure
 
 
 @dataclass
@@ -95,7 +103,7 @@ class TrainConfig:
     weight_decay: float = 0.01
     grad_clip: float = 1.0
     precision: str = "bf16"
-    eval_interval: int = 250
+    eval_interval: int = 1000
     save_interval: int = 1000
     log_interval: int = 10
     microbatch_size: int = 0
@@ -110,6 +118,15 @@ class TrainConfig:
     eval_samples: int = 64
     free_gen_samples: int = 16
     model_seed: int = 0
+    fixed_query_pool: str = "balanced"  # balanced (legacy downsample) | full
+    balance_query_labels: bool = False  # resample labels; never discard pool rows
+    one_hop_fraction: float = 0.0  # fraction of the query batch, not walk batch
+    shuffle_context_edges: bool = False
+    query_hops: str = "all"  # all | one_hop | curriculum
+    curriculum_stage_steps: tuple[int, ...] = ()  # 1 hop, then 1..2, etc.
+    walk_loss_mode: str = "fixed"  # fixed | balanced | none (Stage B only)
+    walk_loss_weight: float = 1.0
+    walk_balance_decay: float = 0.98
 
 
 @dataclass
@@ -121,6 +138,7 @@ class TrackingConfig:
     group: str | None = None
     tags: tuple[str, ...] = ()
     notes: str = ""
+    variant: str = "baseline"  # experiment branch, independent of output protocol
     online_failure: str = "error"  # error | offline
     upload_artifacts: bool = False
     resume: str = "allow"
@@ -144,6 +162,9 @@ class EvaluationConfig:
     # 0 uses remaining context. This is a loop guard, not a search budget:
     # hitting it is a failure and never triggers an oracle/forced answer.
     max_new_tokens: int = 0
+    fixed_query_view: str = "balanced"  # balanced | full; affects val/test only
+    selection_metric: str = "answer_accuracy"
+    final_checkpoints: tuple[str, ...] = ()  # optional full test after training
 
 
 @dataclass
@@ -162,6 +183,7 @@ class AppConfig:
         if self.runtime.smoke:
             self.train.persist_outputs = False
             self.train.save_interval = 0
+            self.evaluation.final_checkpoints = ()
         if not self.train.persist_outputs:
             self.tracking.mode = "disabled"
         _require(self.data.knowledge in {"context_graph", "parametric_graph"}, "data.knowledge")
@@ -170,6 +192,8 @@ class AppConfig:
         _require(self.data.shapes, "at least one shape")
         _require(self.data.max_attempts >= 1, "max_attempts")
         _require(self.data.workers >= 1 and self.data.chunk_size >= 1, "workers/chunk_size")
+        _require(self.data.max_prepared_paths >= 1 and self.data.max_prepared_path_nodes >= 1,
+                 "all-path preparation limits")
         for name, shape in self.data.shapes.items():
             product = shape.layers * shape.width
             if product != self.data.n_nodes:
@@ -196,8 +220,10 @@ class AppConfig:
                 raise ConfigError(f"split {split_name} per shape ({per_shape}) must be even for 1:1 labels")
         if abs(sum(self.data.query_ratios) - 1.0) > 1e-6:
             raise ConfigError("query_ratios must sum to 1")
-        _require(self.protocol.name in {"direct", "path", "dfs_state", "filler"}, "protocol.name")
+        _require(self.protocol.name in {"direct", "path", "dfs_state", "bfs_state", "dfs_nodes", "bfs_nodes", "filler"}, "protocol.name")
         _require(self.protocol.filler_tokens is None or self.protocol.filler_tokens > 0, "filler_tokens")
+        _require(not self.protocol.negative_random_path or self.protocol.name == "path", "negative_random_path requires path")
+        _require(not self.protocol.random_search_order or self.protocol.name in {"dfs_state", "dfs_nodes", "bfs_state", "bfs_nodes"}, "random_search_order requires a search protocol")
         _require(self.model.ffn in {"standard", "shared_dense"}, "model.ffn")
         if self.model.ffn not in {"standard", "shared_dense"}:
             raise ConfigError("unsupported ffn")
@@ -224,10 +250,27 @@ class AppConfig:
         _require(len(self.train.betas) == 2, "betas")
         _require(self.train.effective_query_batch_size >= 1, "batch")
         _require(self.train.max_steps >= 1, "max_steps")
+        _require(self.train.fixed_query_pool in {"balanced", "full"}, "fixed_query_pool")
+        _require(self.train.query_hops in {"all", "one_hop", "curriculum"}, "query_hops")
+        _require(self.train.walk_loss_mode in {"fixed", "balanced", "none"}, "walk_loss_mode")
+        _require(self.train.walk_loss_weight >= 0, "walk_loss_weight")
+        _require(0 <= self.train.walk_balance_decay < 1, "walk_balance_decay")
+        if self.train.query_hops == "curriculum" and self.train.stage != "A":
+            hops = max(s.layers for s in self.data.shapes.values()) - 1
+            _require(len(self.train.curriculum_stage_steps) == hops
+                     and all(n > 0 for n in self.train.curriculum_stage_steps)
+                     and sum(self.train.curriculum_stage_steps) == self.train.max_steps,
+                     "curriculum_stage_steps must give positive budgets for all hops and sum to max_steps")
+        _require(0 <= self.train.one_hop_fraction < 1, "one_hop_fraction must be in [0,1)")
+        if self.train.one_hop_fraction > 0 and self.train.stage == "B":
+            _require(self.data.include_one_hop_queries, "one_hop_fraction requires include_one_hop_queries")
+        _require(self.evaluation.fixed_query_view in {"balanced", "full"}, "fixed_query_view")
+        _require(self.evaluation.selection_metric in {"answer_accuracy", "balanced_accuracy"}, "selection_metric")
+        _require(all(x in {"best", "last"} for x in self.evaluation.final_checkpoints), "final_checkpoints")
         _require(self.train.microbatch_size >= 0 and self.train.max_tokens_per_microbatch >= 0, "microbatch limits")
         _require(self.evaluation.batch_size >= 1 and self.evaluation.test_samples >= 0
                  and self.evaluation.max_new_tokens >= 0, "evaluation limits")
-        if self.train.stage in {"A", "B"}:
+        if self.train.stage == "A" or (self.train.stage == "B" and self.train.walk_loss_mode != "none"):
             _require(self.train.walk_batch_size > 0, "stages A/B require a positive walk_batch_size")
         _require(self.tracking.resume in {"allow", "must", "never"}, "tracking.resume")
         _require(self.tracking.mode in {"online", "offline", "disabled"}, "tracking.mode")
@@ -282,6 +325,12 @@ def _worst_sequence_len(cfg: AppConfig) -> int:
         body = filler_length(cfg)
     elif cfg.protocol.name == "path":
         body = max(s.layers for s in cfg.data.shapes.values())
+    elif cfg.protocol.name in {"dfs_nodes", "bfs_nodes"}:
+        body = cfg.data.n_nodes
+    elif cfg.protocol.name == "bfs_state":
+        # FIFO frontier area <=N^2: its size changes by +/-1 for each
+        # enqueue/dequeue. Other list/action bounds are shared with DFS.
+        body = dfs_body_bound(cfg.data)
     else:
         body = dfs_body_bound(cfg.data)
     longest = prompt + body + ANSWER_TAIL_TOKENS
@@ -403,7 +452,8 @@ def _app_from_dict(raw: Mapping[str, Any]) -> AppConfig:
         train=_train_from_dict(raw.get("train", {})),
         tracking=_tracking_from_dict(raw.get("tracking", {})),
         runtime=_runtime_from_dict(raw.get("runtime", {})),
-        evaluation=_fill(EvaluationConfig, raw.get("evaluation", {}), "evaluation"),
+        evaluation=_fill(EvaluationConfig, raw.get("evaluation", {}), "evaluation",
+                         {"final_checkpoints": lambda v: tuple(str(x) for x in v)}),
     )
 
 
@@ -448,6 +498,8 @@ def _data_from_dict(raw: Mapping[str, Any]) -> DataConfig:
         "chunk_size",
         "min_edge_coverage",
         "n_walks",
+        "max_prepared_paths",
+        "max_prepared_path_nodes",
     ):
         if key in raw:
             kwargs[key] = int(raw[key])
@@ -457,6 +509,11 @@ def _data_from_dict(raw: Mapping[str, Any]) -> DataConfig:
         kwargs["graph_shape"] = str(raw["graph_shape"])
     if "graph_seed" in raw and raw["graph_seed"] is not None:
         kwargs["graph_seed"] = int(raw["graph_seed"])
+    for key in ("include_one_hop_queries", "context_holdout_first"):
+        if key in raw:
+            if not isinstance(raw[key], bool):
+                raise ConfigError(f"data.{key} must be boolean")
+            kwargs[key] = raw[key]
     return DataConfig(**kwargs)
 
 
@@ -504,7 +561,8 @@ def _train_from_dict(raw: Mapping[str, Any]) -> TrainConfig:
         TrainConfig,
         raw,
         "train",
-        {"betas": lambda v: _as_float_tuple(v, 2, "train.betas")},
+        {"betas": lambda v: _as_float_tuple(v, 2, "train.betas"),
+         "curriculum_stage_steps": lambda v: (() if v == [] or v == () else _as_int_tuple(v, "curriculum_stage_steps"))},
     )
 
 

@@ -55,16 +55,47 @@ WALK 保留为图知识数据类型标记：`WALK u v ... EOS`。只监督转移
 
 ## 实施状态
 
-本文件是最新首轮设计。紧凑协议使用词表 v2、数据 schema/generator v3、checkpoint v3；旧 checkpoint 与新词表不兼容，须从零训练新版本。smoke 零持久化继续有效。实现与部署验证进度以本次交付说明为准。
+本文件是最新首轮设计。紧凑协议使用词表 v2、数据 schema v3；新图 generator/checkpoint v3，固定图 generator/checkpoint v4（完整路径表 v1）；旧 checkpoint 与新词表不兼容，须从零训练新版本。smoke 零持久化继续有效。实现与部署验证进度以本次交付说明为准。
 
 
 ## 固定图两阶段训练（最终确认）
 
 Stage A 仅5k条1–4边随机游走及补充一跳边，全部边至少监督100次；1k updates，walk batch64。知识阶段不加载查询数组，不采样、不训练或验证查询。
 
-Stage B 从共同 Stage A checkpoint 复制四组，2k updates，每步64查询+16 walk；task与walk loss分别归一化后相加。任务输入无图。各组查询和walk次序对齐。新图10k/2k/2k，训练2k updates、batch64，共128k次查询曝光；固定图查询按20%/10%/70%划分、按距离平衡。
+Stage B 从共同 Stage A checkpoint 复制四组，2k updates，每步64查询+16 walk；task与walk loss分别归一化后相加。任务输入无图。各组查询和walk次序对齐。新图10k/2k/2k，训练2k updates、batch64，共128k次查询曝光；固定图查询按50%/20%/30%划分、按距离平衡。
 
 四组都有独立入口：configs/experiments/main_context_{direct,path,dfs_state,filler}.yaml 和 main_stage_b_{direct,path,dfs_state,filler}.yaml；知识阶段 main_stage_a.yaml。filler_tokens=null自动取N，不会在输入中增加长度标记。
 
 
-数据量缩减：固定图5k为随机游走基础条数，边覆盖不足时补充一跳记录，最终条数可能略高；基础边每条至少监督100次。共同warmup调整为100步。固定图查询划分、图规模、四种协议与Filler长度不变。
+数据量缩减：固定图5k为随机游走基础条数，边覆盖不足时补充一跳记录，最终条数可能略高；基础边每条至少监督100次。共同warmup调整为100步。固定图当前划分为50%/20%/30%；图规模、四种协议与Filler长度不变。
+
+
+## 固定图 Path 的多路径监督
+
+在准备数据时枚举每个正例查询的全部有效路径，负例无路径。路径用 `paths.npz` 的 query_offsets/path_offsets/nodes 三个数组存储，不复制图、查询和标签。先动态规划计数并检查资源上限，再剪枝枚举；校验用独立的前向计数加合法性、唯一性检查证明完整性，不以截断近似“全部路径”。
+
+训练先抽查询，再在该查询的路径集合中均匀选一条，每次出现可重新选路。保留按距离匹配正负的查询池与四协议对齐的查询/walk 顺序；不按全图所有路径均匀抽样，避免多路径查询获得额外权重。选路使用独立 RNG，checkpoint 恢复包含其状态，渲染缓存的键包含路径编号。Stage A 不加载查询或路径表。
+
+teacher-forced 验证固定采用路径0以稳定诊断；free-generation 仍从 QUERY 提示自由生成，主指标仅最终可达性。验证/测试路径只是参考数据，不参与训练；验证不改变训练随机数状态。walk 见证暴露审计现检查是否存在任意一条合法见证被展示。
+
+新固定图目录为 `data/first_round_v2/parametric_n32_m48_allpaths_v1`。修改划分或路径表后须使用新数据/新 run-name；旧 fixed checkpoint 不兼容。每图默认最多100万路径、2000万节点条目；复杂图超限时明确失败，调整参数或图复杂度后重建。
+
+
+正式数据配置的临时生成核对（未启动训练）：
+
+| graph seed | 原始 train/val/test 查询 | 平衡后 train/val/test 查询 | 全查询有效路径数 | 训练正例中有多条路径的查询数 |
+| --- | --- | --- | ---: | ---: |
+| 0 | 164/62/110 | 102/36/74 | 849 | 27 |
+| 1 | 166/64/106 | 120/46/78 | 659 | 25 |
+| 2 | 166/61/109 | 92/30/66 | 874 | 18 |
+
+50%/20%/30% 为每个距离/标签桶的目标比例，桶内取整且极小桶留给测试，因此整体不恰好等于比例；正负平衡会进一步缩减查询池。路径总数包括 train/val/test 的离线参考，训练只抽平衡后的 train 查询。三图的每个查询最多分别有19/23/36条路径，负例为0。
+
+
+## 离线准备与训练取数
+
+正式/pilot 验证间隔统一改为1000 optimizer updates。当前2k步任务训练在第1000和2000步验证；Stage A仍不做查询验证。
+
+`scripts/prepare_first_round.sh` 一次准备新图全部三份 split、固定图全部三个世界、完整路径表及四种协议/walk的 token 缓存，并将全量 BFS 审计报告保存到数据目录。`prepared_data.json` 绑定生成身份和文件状态，后续启动直接复用；文件变化自动失效，也可 `--force-validate` 显式重审计。token缓存单独以源数据fingerprint、词表、协议、Filler长度和renderer版本命名，不改变底层样本/划分。
+
+每个训练进程启动时载入所需协议并预载全部训练查询及其路径变体、全部 walk。训练 update 不生成图、不枚举路径、不跑DFS、不读磁盘，仅在内存里选择和拼 batch；取消原8192条渲染缓存上限。验证/测试 token 缓存可共存，但不会作为训练查询预载。DFS参考状态只在评估诊断时重建，不增加训练取数成本。

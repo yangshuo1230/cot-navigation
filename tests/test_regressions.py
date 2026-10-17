@@ -114,20 +114,21 @@ def test_generation_resume_worker_change_keeps_identity_and_corruption_is_detect
     assert np.array_equal(before.arrays["edge_src"], ContextStore(cfg.data.root).arrays["edge_src"])
 
 
-def test_same_update_all_metrics_reach_wandb_history(tmp_path, monkeypatch):
+def test_same_update_core_metrics_reach_wandb_history(tmp_path, monkeypatch):
     cfg = tiny_config(tmp_path)
     cfg.tracking.mode = "offline"
     monkeypatch.setenv("WANDB_SILENT", "true")
     tracker = Tracker(cfg, "audit-regression", None, {})
-    tracker.log(1, {"train_unique_probe": 1.0})
-    tracker.log(1, {"teacher_forced_unique_probe": 2.0})
-    tracker.log(1, {"free_unique_probe": 3.0})
+    tracker.log(1, {"answer_loss": 1.0, "local_only_probe": 7.0})
+    tracker.log(1, {"teacher_forced/overall/answer_accuracy": 0.5})
+    tracker.log(1, {"free/overall/answer_accuracy": 0.25})
     tracker.finish()
     streams = list(Path(cfg.output_dir).rglob("*.wandb"))
     assert streams
     raw = b"".join(p.read_bytes() for p in streams)
-    for key in (b"train_unique_probe", b"teacher_forced_unique_probe", b"free_unique_probe"):
+    for key in (b"answer_loss", b"teacher_forced/overall/answer_accuracy", b"free/overall/answer_accuracy"):
         assert key in raw
+    assert b"local_only_probe" not in raw
     assert len((Path(cfg.output_dir) / "metrics.jsonl").read_text().splitlines()) == 3
 
 
@@ -228,7 +229,7 @@ def test_complete_smoke_cleans_temporary_data(tmp_path):
     result = run_smoke(cfg, steps=1)
     assert result["temporary_data_cleaned"]
     assert not result["persist_outputs"] and result["checkpoints_saved"] == 0
-    assert len(result["runs"]) == 9
+    assert len(result["runs"]) == 13
     assert not Path(cfg.output_dir).exists()
 
 

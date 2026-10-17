@@ -1,0 +1,8 @@
+includes:
+  - main_stage_a.yaml
+output_dir: outputs/retrain_v3/fixed/stage_a
+data:
+  root: data/retrain_v3/parametric_n32_m48_onehop_s0
+  include_one_hop_queries: true
+tracking:
+  tags: [retrain_v3, knowledge]

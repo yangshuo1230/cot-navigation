@@ -41,6 +41,7 @@ def combine_losses(
     walk_mask: torch.Tensor,
     n_task: int,
     n_walk: int,
+    walk_weight=1.0,
 ) -> dict[str, torch.Tensor]:
     nll = token_nll(logits, tokens)
     answer, has_answer = masked_mean(nll, answer_mask)
@@ -54,7 +55,7 @@ def combine_losses(
         total = task.sum() / n_task
     if n_walk > 0:
         walk_mean = walk_term.sum() / n_walk
-        total = walk_mean if total is None else total + walk_mean
+        total = walk_weight * walk_mean if total is None else total + walk_weight * walk_mean
     if total is None:
         total = logits.new_zeros(())
     # Counts stay tensors so the training step does not synchronize just to log.

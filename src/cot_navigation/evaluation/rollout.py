@@ -95,7 +95,7 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
     """
     if not prompts:
         return []
-    if protocol not in {"direct", "path", "dfs_state", "filler"}:
+    if protocol not in {"direct", "path", "dfs_state", "bfs_state", "dfs_nodes", "bfs_nodes", "filler"}:
         raise ValueError(protocol)
     if protocol == "filler" and filler_tokens < 1:
         raise ValueError("filler_tokens must be positive")

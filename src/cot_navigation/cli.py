@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
 
     data = sub.add_parser("data")
     data_sub = data.add_subparsers(dest="data_cmd", required=True)
-    for name in ("generate", "validate"):
+    for name in ("generate", "validate", "prepare"):
         cmd = data_sub.add_parser(name)
         cmd.add_argument("--config", action="append", required=True)
         cmd.add_argument("--set", action="append", default=[])
@@ -41,6 +41,10 @@ def main(argv: list[str] | None = None) -> int:
         if name == "generate":
             cmd.add_argument("--resume", dest="resume", action="store_true", default=True)
             cmd.add_argument("--no-resume", dest="resume", action="store_false")
+        if name == "prepare":
+            cmd.add_argument("--protocols", nargs="+", choices=("direct", "path", "dfs_state", "bfs_state", "dfs_nodes", "bfs_nodes", "filler"),
+                             default=["direct", "path", "dfs_state"])
+            cmd.add_argument("--force-validate", action="store_true", help="rerun structural audits even if receipt matches")
 
     train_p = sub.add_parser("train")
     _add_common(train_p)
@@ -51,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     _add_common(eval_p)
     eval_p.add_argument("--checkpoint", required=True)
     eval_p.add_argument("--split", default="test")
+    eval_p.add_argument("--query-view", choices=("full", "balanced", "one_hop", "multi_hop"),
+                        help="Fixed-graph evaluation view; one_hop is a train-only diagnostic")
 
     bench_p = sub.add_parser("benchmark")
     _add_common(bench_p)
@@ -99,6 +105,13 @@ def main(argv: list[str] | None = None) -> int:
             manifest = generate_parametric(cfg.data, resume=args.resume)
         print(json.dumps({"root": cfg.data.root, "kind": manifest["kind"]}, indent=2))
         return 0
+    if args.command == "data" and args.data_cmd == "prepare":
+        from cot_navigation.data.prepared import prepare_dataset
+        report = prepare_dataset(cfg, args.protocols, force_validate=args.force_validate)
+        print(json.dumps({"root": cfg.data.root, "reused": report["reused"],
+                          "protocols": report["protocols"], "validation": report["validation"],
+                          "caches": report["caches"]}, indent=2))
+        return 0
     if args.command == "data" and args.data_cmd == "validate":
         if cfg.data.knowledge == "context_graph":
             report = validate_context(cfg.data)
@@ -123,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "evaluate":
         trainer = Trainer(cfg, evaluation_checkpoint=args.checkpoint)
         try:
-            report = trainer.evaluate_split(args.split)
+            report = trainer.evaluate_split(args.split, query_view=args.query_view)
         finally:
             trainer.tracker.finish()
         summary = report.get("overall", {})

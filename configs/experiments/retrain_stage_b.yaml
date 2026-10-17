@@ -1,0 +1,23 @@
+includes:
+  - main_stage_b.yaml
+output_dir: outputs/retrain_v3/fixed/stage_b
+data:
+  root: data/retrain_v3/parametric_n32_m48_onehop_s0
+  include_one_hop_queries: true
+train:
+  max_steps: 50000
+  eval_interval: 5000
+  save_interval: 5000
+  eval_samples: 0  # entire held-out val pool, not just its downsample
+  free_gen_samples: 256  # exceeds these worlds' full val sizes
+  fixed_query_pool: full
+  balance_query_labels: true
+  one_hop_fraction: 0.25
+evaluation:
+  batch_size: 16
+  fixed_query_view: full
+  selection_metric: balanced_accuracy
+  test_samples: 0
+  final_checkpoints: [best, last]
+tracking:
+  tags: [retrain_v3, one_hop, query_coverage]

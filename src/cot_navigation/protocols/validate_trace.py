@@ -3,13 +3,15 @@ from __future__ import annotations
 from cot_navigation.protocols.dfs import Step
 from cot_navigation.protocols.tokenizer import Tokenizer
 
-def parse_completed_steps(tokens: list[int], tok: Tokenizer) -> list[dict]:
+def parse_completed_steps(tokens: list[int], tok: Tokenizer, *, fifo: bool = False) -> list[dict]:
     records, start = [], 0
     for end, token in enumerate(tokens):
         if token != tok.id(";"):
             continue
         parsed = _parse_record(tokens[start:end], tok)
         if parsed is not None:
+            if fifo:
+                parsed["cur"] = parsed["stack"][0]
             records.append(parsed)
         start = end + 1
     return records
