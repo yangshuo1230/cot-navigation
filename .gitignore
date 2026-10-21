@@ -1,16 +1,53 @@
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints/
 
-# data, runs, and checkpoints
+# local snapshots; keep them on disk, not on GitHub
+.code_backups/
+
+# datasets, runs, logs, and checkpoints
 data/
 outputs/
 wandb/
+runs/
+checkpoints/
+figures/
+research/
+*.log
+*.jsonl
+*.wandb
+
+# model weights and array dumps (GitHub rejects files over 100MB)
 *.pt
+*.pth
 *.ckpt
+*.bin
+*.safetensors
+*.onnx
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.parquet
+*.arrow
+*.feather
+*.h5
+*.hdf5
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
 
 # secrets and local env
 .env
@@ -21,6 +58,7 @@ wandb/
 .triton/
 torchinductor_*/
 **/__pycache__/
+.cache/
 
 # editor
 .idea/

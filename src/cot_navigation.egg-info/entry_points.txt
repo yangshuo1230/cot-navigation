@@ -1,2 +1,0 @@
-[console_scripts]
-cot-nav = cot_navigation.cli:main

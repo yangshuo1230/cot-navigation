@@ -3,7 +3,8 @@
 DFS records use: stack | visited | candidates | action [node] ;
 BFS records use the same tokens with a FIFO queue as the first field.
 Node-only search emits unique first-expansion nodes, then the final answer.
-All states precede their action. Training examples are never truncated.
+All states precede their action. A search body that would end inside the last
+few context positions is cut on a record boundary, then <STOP> and the answer.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -90,6 +91,47 @@ def render_task(tok: Tokenizer, protocol: str, label: int, prompt: list[int],
         meta={"full_body_len": len(body), "full_body": body, "steps": len(steps),
               "reference_steps": steps, "node_token": node_token},
     )
+
+def truncate_example(row: RenderedExample, tok: Tokenizer, max_seq_len: int, margin: int) -> RenderedExample:
+    """Keep the answer outside the last ``margin`` context positions.
+
+    State traces are cut after a completed ``;`` record. Path and node traces,
+    which have no record marker, are cut on a token boundary. <STOP> is
+    supervised, then the original YES/NO and EOS.
+    """
+    if margin <= 0 or len(row.tokens) <= max_seq_len - margin:
+        return row
+    limit = max_seq_len - margin
+    answer = row.tokens[row.answer_index:]
+    if len(answer) < 2:
+        raise ValueError("truncated example is missing its YES/NO and EOS tail")
+    stop = tok.id("<STOP>")
+    tail = [stop, *answer]
+    budget = limit - row.prompt_len - len(tail)
+    if budget < 0:
+        raise ValueError(f"prompt length {row.prompt_len} leaves no room for STOP and the answer")
+    body = row.tokens[row.prompt_len:row.answer_index]
+    if body and body[-1] == stop:
+        body = body[:-1]
+    semi = tok.id(";")
+    if any(token == semi for token in body):
+        cut_at = 0
+        for index, token in enumerate(body[:budget]):
+            if token == semi:
+                cut_at = index + 1
+    else:
+        cut_at = budget
+    new_body = body[:cut_at] + [stop]
+    answer_index = row.prompt_len + len(new_body)
+    updated = RenderedExample(
+        tokens=row.tokens[:row.prompt_len] + new_body + answer,
+        prompt_len=row.prompt_len, answer_index=answer_index,
+        trace_indices=list(range(row.prompt_len, answer_index)) + [answer_index + 1],
+        walk_indices=row.walk_indices, label=row.label, filler_tokens=row.filler_tokens,
+        meta={**row.meta, "full_body_len": len(body), "truncated": True},
+    )
+    return updated
+
 
 def render_walk(tok: Tokenizer, node_token: list[int], nodes: list[int]) -> RenderedExample:
     """Only transitions carry loss; EOS is a corpus boundary, not a sink label."""

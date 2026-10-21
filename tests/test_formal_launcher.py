@@ -117,3 +117,33 @@ def test_background_dry_run_and_invalid_gpu_never_spawn_or_create_dirs(tmp_path,
     with pytest.raises(ValueError, match="GPU indices do not exist.*45"):
         runner.main(common + ["--gpus", "0", "45"])
     assert not output.exists()
+
+
+def test_resume_can_retry_sampler_initialization_without_a_checkpoint(tmp_path,monkeypatch):
+    args=runner.parse_args(['--setting','context','--protocols','direct','--run-name','retry',
+                            '--output-root',str(tmp_path),'--resume'])
+    output,jobs=runner.build_jobs(args)
+    job=jobs[0]
+    job.output.mkdir(parents=True)
+    (job.output/'resolved_config.yaml').write_text('{}')
+    (job.output/'train.log').write_text('ValueError: empty curriculum stratum 7/0\n')
+    assert runner.initialization_only(job.output)
+    monkeypatch.setattr(runner,'idle_gpus',lambda:[])
+    # Exercise preflight without starting a process or training. The records
+    # guard passes; scheduling reaches the expected no-idle-GPU condition.
+    with pytest.raises(RuntimeError,match='No selected GPU is idle'):
+        runner.run_jobs(args,jobs,output,[0],{})
+    assert (job.output/'train.log').read_text().startswith('ValueError')
+    args.resume=False
+    with pytest.raises(RuntimeError,match='no resumable checkpoint'):
+        runner.run_jobs(args,jobs,output,[0],{})
+
+
+@pytest.mark.parametrize('marker',['metrics.jsonl','env.json','wandb','checkpoints'])
+def test_no_checkpoint_retry_never_resets_progressed_or_tracked_runs(tmp_path,marker):
+    (tmp_path/'resolved_config.yaml').write_text('{}')
+    if marker in ('wandb','checkpoints'):
+        (tmp_path/marker).mkdir()
+    else:
+        (tmp_path/marker).write_text('{}\n')
+    assert not runner.initialization_only(tmp_path)

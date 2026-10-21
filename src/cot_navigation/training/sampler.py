@@ -8,6 +8,7 @@ Evaluation must not draw from these generators.
 from __future__ import annotations
 
 import numpy as np
+import warnings
 from numpy.random import Generator, PCG64
 
 
@@ -131,7 +132,10 @@ class FixedQuerySampler:
 class HopCurriculumSampler:
     """Equal stage durations are configured explicitly; equal per-hop/label replay.
 
-    Stage k samples hops 1..k uniformly, balancing YES/NO inside each hop.
+    Stage k assigns equal slots to hops 1..k, balancing YES/NO per slot.
+    If hop h has no negative training query, its negative slots draw from
+    shorter-hop training negatives. Positive hop difficulty is never relaxed;
+    neither future hops nor held-out queries enter the fallback pool.
     Cumulative round-robin quotas differ by at most one even for batch=64/k.
     Every stratum cycles without dropping rows. No held-out ids are supplied.
     """
@@ -142,11 +146,22 @@ class HopCurriculumSampler:
         self.step = 0
         self.rng = Generator(PCG64(seed + 503))
         self.groups, self.samplers = {}, {}
+        self.negative_fallbacks = {}
         self.label_counts = {hop: 0 for hop in range(1, len(stage_steps)+1)}
+        distances, labels = np.asarray(distances), np.asarray(labels)
         for hop in self.label_counts:
             for label in (0, 1):
                 key = f"{hop}/{label}"
-                ids = np.flatnonzero((np.asarray(distances) == hop) & (np.asarray(labels) == label))
+                ids = np.flatnonzero((distances == hop) & (labels == label))
+                if not len(ids) and label == 0:
+                    ids = np.flatnonzero((distances >= 1) & (distances < hop) & (labels == 0))
+                    if len(ids):
+                        source_hops = sorted(int(h) for h in np.unique(distances[ids]))
+                        self.negative_fallbacks[key] = {"source_hops": source_hops, "n_items": len(ids)}
+                        warnings.warn(
+                            f"curriculum stratum {key} is empty; sampling its negative slots "
+                            f"from training hops {source_hops} ({len(ids)} queries)",
+                            RuntimeWarning, stacklevel=2)
                 if not len(ids):
                     raise ValueError(f"empty curriculum stratum {key}")
                 self.groups[key] = ids
@@ -177,6 +192,7 @@ class HopCurriculumSampler:
                 "stage_steps": self.stage_steps, "rng": self.rng.bit_generator.state,
                 "label_counts": dict(self.label_counts),
                 "groups": {k: v.tolist() for k, v in self.groups.items()},
+                "negative_fallbacks": dict(self.negative_fallbacks),
                 "samplers": {k: v.state_dict() for k, v in self.samplers.items()}}
 
     def load_state_dict(self, state):
@@ -189,4 +205,85 @@ class HopCurriculumSampler:
         self.label_counts = dict(state["label_counts"])
         for key, sampler in self.samplers.items():
             sampler.load_state_dict(state["samplers"][key])
+
+
+class BufferedSampler:
+    """Adapt a balanced logical-batch sampler to variable scale quotas."""
+    def __init__(self, sampler):
+        self.sampler, self.pending = sampler, []
+
+    def take(self, count):
+        while len(self.pending) < count:
+            self.pending.extend(self.sampler.next())
+        result, self.pending = self.pending[:count], self.pending[count:]
+        return result
+
+    def state_dict(self):
+        return {'sampler': self.sampler.state_dict(), 'pending': self.pending}
+
+    def load_state_dict(self, state):
+        self.sampler.load_state_dict(state['sampler'])
+        self.pending = list(state['pending'])
+
+
+class ScaleMixtureSampler:
+    """Draw a batch from several datasets using cumulative scale quotas.
+
+    Returns ``(member_index, local_index)`` pairs. A zero weight does not
+    advance that member, so a later stage can start it from the first epoch.
+    """
+
+    def __init__(self, sizes, batch_size, seed, weights):
+        if batch_size < 1 or any(int(size) < 1 for size in sizes):
+            raise ValueError("scale mixture needs a positive batch and nonempty members")
+        self.batch_size = int(batch_size)
+        self.samplers = [IndexSampler(int(size), self.batch_size, int(seed) + 17 * (i + 1)) for i, size in enumerate(sizes)]
+        self.rng = Generator(PCG64(int(seed) + 900))
+        self.step = 0
+        self.set_weights(weights)
+
+    def set_weights(self, weights):
+        values = np.asarray(list(weights), dtype=np.float64)
+        if values.shape != (len(self.samplers),) or np.any(values < 0) or float(values.sum()) <= 0:
+            raise ValueError("scale weights must be nonnegative and not all zero")
+        self.weights = values / values.sum()
+
+    def _cuts(self, steps_done):
+        total = int(steps_done) * self.batch_size
+        cumulative = 0.0
+        cuts = []
+        for index, weight in enumerate(self.weights):
+            cumulative += float(weight)
+            cuts.append(total if index + 1 == len(self.weights) else int(total * cumulative + 1e-9))
+        return cuts
+
+    def next(self):
+        before, after = self._cuts(self.step), self._cuts(self.step + 1)
+        counts, previous = [], 0
+        for end_before, end_after in zip(before, after):
+            counts.append((end_after - end_before) - previous)
+            previous = end_after - end_before
+        picked = []
+        for index, count in enumerate(counts):
+            if count:
+                picked.extend((index, local) for local in self.samplers[index].take(count))
+        self.step += 1
+        order = self.rng.permutation(len(picked))
+        return [picked[int(i)] for i in order]
+
+    def state_dict(self):
+        return {"kind": "scale_mix_v1", "step": self.step, "batch_size": self.batch_size,
+                "weights": self.weights.tolist(), "rng": self.rng.bit_generator.state,
+                "samplers": [sampler.state_dict() for sampler in self.samplers]}
+
+    def load_state_dict(self, state):
+        if state.get("kind") != "scale_mix_v1" or int(state["batch_size"]) != self.batch_size:
+            raise ValueError("scale mixture resume mismatch")
+        if len(state["samplers"]) != len(self.samplers):
+            raise ValueError("scale mixture member count mismatch")
+        self.step = int(state["step"])
+        self.set_weights(state["weights"])
+        self.rng.bit_generator.state = state["rng"]
+        for sampler, saved in zip(self.samplers, state["samplers"]):
+            sampler.load_state_dict(saved)
 

@@ -151,7 +151,8 @@ def check_resume_plan(previous: dict, current: dict):
             "protocol": {"negative_random_path": False, "random_search_order": False},
             "train": {"shuffle_context_edges": False, "query_hops": "all",
                       "curriculum_stage_steps": [], "walk_loss_mode": "fixed",
-                      "walk_loss_weight": 1.0, "walk_balance_decay": 0.98},
+                      "walk_loss_weight": 1.0, "walk_balance_decay": 0.98,
+                      "task_only": False, "skip_knowledge_stage": False},
             "tracking": {"variant": "baseline"},
         }
         for section, defaults in additions.items():
@@ -224,13 +225,15 @@ def job_complete(job):
     cfg = load_config([job.config], job.overrides)
     if cfg.train.stage != "A":
         for tag in cfg.evaluation.final_checkpoints:
-            path = job.output / "eval" / f"free_test_{tag}.json"
-            try:
-                report = json.loads(path.read_text())
-                if report.get("training_step", -1) < job.steps or report.get("overall", {}).get("n", 0) < 1:
+            names = [tag] + [f'{tag}-{spec.split("=", 1)[0]}' for spec in cfg.evaluation.extra_sets]
+            for name in names:
+                path = job.output / 'eval' / f'free_test_{name}.json'
+                try:
+                    report = json.loads(path.read_text())
+                    if report.get('training_step', -1) < job.steps or report.get('overall', {}).get('n', 0) < 1:
+                        return False
+                except (OSError, ValueError):
                     return False
-            except (OSError, ValueError):
-                return False
     return True
 
 
@@ -254,6 +257,19 @@ def progress(job, started, resumed_step=0, metrics_mtime=0):
     return message
 
 
+def initialization_only(output):
+    """Allow retrying a failed constructor, never reset a trained branch.
+
+    The trainer writes its resolved config before constructing the samplers.
+    A sampler failure can leave exactly that config and the launcher's log.
+    env/metrics/W&B/checkpoint files mean initialization progressed further;
+    those directories still require a checkpoint or explicit intervention.
+    """
+    return ((output / "resolved_config.yaml").is_file()
+            and all(p.is_file() and p.name in {"resolved_config.yaml", "train.log"}
+                    for p in output.iterdir()))
+
+
 def run_jobs(args, jobs, output, selected, env):
     done, pending, running = set(), list(jobs), {}
     lookup = {job.name: job for job in jobs}
@@ -266,7 +282,10 @@ def run_jobs(args, jobs, output, selected, env):
                 done.add(job.name); pending.remove(job)
                 print(f"Already completed: {job.name}", flush=True)
         elif job.output.exists() and any(job.output.iterdir()):
-            raise RuntimeError(f"{job.output} has records but no resumable checkpoint; use a new --run-name")
+            if args.resume and initialization_only(job.output):
+                print(f"Retrying initialization (no training checkpoint/updates): {job.name}", flush=True)
+            else:
+                raise RuntimeError(f"{job.output} has records but no resumable checkpoint; use a new --run-name")
     last_status = 0
     try:
         while pending or running:
@@ -363,7 +382,7 @@ def main(argv=None):
     return execute(args, output, jobs, argv)
 
 
-def execute(args, output, jobs, argv, *, script_path=None):
+def execute(args, output, jobs, argv, *, script_path=None, data_preparer=None):
     """Shared scheduling engine; data suites supply their own immutable plan."""
     inventory = idle_gpus()
     selected = args.gpus if args.gpus is not None else [row["index"] for row in inventory]
@@ -397,7 +416,7 @@ def execute(args, output, jobs, argv, *, script_path=None):
            "TORCHINDUCTOR_COMPILE_THREADS": os.environ.get("TORCHINDUCTOR_COMPILE_THREADS", "2")}
     with file_lock(output / ".launch.lock", blocking=False):
         write_json(output / "launch_plan.json", plan)
-        prepare_data(jobs, output, env)
+        (data_preparer or prepare_data)(jobs, output, env)
         run_jobs(args, jobs, output, selected, env)
     return 0
 

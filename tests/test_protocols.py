@@ -34,7 +34,10 @@ def test_dfs_chain_dead_end_merge_and_empty():
 
 def test_compact_vocabulary_and_explicit_edges_queries():
     tok = Tokenizer()
-    assert len(tok) == 270 and tok.version == "v2"
+    assert len(tok) == 270 and tok.version == "v2" and tok.node_lo == 14
+    extended = Tokenizer(enable_stop=True)
+    assert len(extended) == 271 and extended.itos[:len(tok)] == tok.itos
+    assert extended.id("<STOP>") == 270
     for old in ("<ANS>", "<CUT>", "<BUDGET>", "<DFS>", "<CUR>", "<NONE>"):
         with pytest.raises(KeyError):
             tok.id(old)

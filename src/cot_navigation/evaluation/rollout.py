@@ -86,12 +86,14 @@ def _decode_step(model, cache, token_ids: torch.Tensor, precision: str, active=N
 @torch.no_grad()
 def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
              tok: Tokenizer, precision: str = "fp32", *, filler_tokens: int = 0,
-             max_new_tokens: int = 0) -> list[dict]:
+             max_new_tokens: int = 0, cot_margin: int = 0) -> list[dict]:
     """Greedy free generation; the first YES/NO terminates a response.
 
-    There is no oracle length, cutoff token or forced answer. EOS before an
-    answer and exhausted context/safety limits are failures. Trace errors do
-    not veto a correct answer. Direct/Filler sample exactly one answer token.
+    By default exhausted context and EOS before an answer are failures. With
+    cot_margin enabled, STOP interrupts at the token budget (complete records
+    for state traces); the next answer is the model argmax over YES/NO, never
+    an oracle label. Trace errors do not veto a correct answer. Direct/Filler
+    sample exactly one answer token.
     """
     if not prompts:
         return []
@@ -124,15 +126,41 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
     active = [True] * len(prompts)
     limits = [False] * len(prompts)
     counts = [0] * len(prompts)
+    stop = tok.stoi.get('<STOP>')
+    pending_answer = [False] * len(prompts)
+    forced_stop = [False] * len(prompts)
+    interrupted = [False] * len(prompts)
+    last_record = [0] * len(prompts)
+    if cot_margin and stop is None:
+        raise ValueError('CoT interruption requires the opt-in STOP vocabulary')
     eos = tok.id("<EOS>")
     while any(active):
         # One transfer per decode step, not per row.
         picked = next_logits.argmax(dim=-1).tolist()
+        answer_picks = (next_logits[:, [tok.no, tok.yes]].argmax(-1).tolist()
+                        if any(pending_answer) else None)
         feed = [tok.pad] * len(prompts)
         for i in range(len(prompts)):
             if not active[i]:
                 continue
             pred = picked[i]
+            if pending_answer[i]:
+                # Protocol-constrained answer, using model logits, never gold.
+                pred = (tok.no, tok.yes)[answer_picks[i]]
+            elif (cot_margin and protocol not in {'direct', 'filler'}
+                  and len(inputs[i]) + counts[i] >= model.max_seq_len - cot_margin - 3
+                  and pred not in (tok.yes, tok.no)):
+                if protocol in {'dfs_state', 'bfs_state'}:
+                    keep = last_record[i]
+                    generated[i] = generated[i][:keep]
+                    traces[i] = traces[i][:keep]
+                    counts[i] = keep
+                    cache.lengths[i] = len(inputs[i]) + keep
+                pred = stop
+                forced_stop[i] = True
+            if cot_margin and pred == stop:
+                pending_answer[i] = True
+                interrupted[i] = True
             generated[i].append(pred)
             counts[i] += 1
             if protocol in {"direct", "filler"}:
@@ -146,6 +174,8 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
                 active[i] = False
             else:
                 traces[i].append(pred)
+                if pred == tok.id(';'):
+                    last_record[i] = len(traces[i])
                 if counts[i] >= caps[i]:
                     limits[i] = True
                     active[i] = False
@@ -161,5 +191,7 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
         results.append({"prompt_len": len(prompt), "generated": generated[i],
                         "trace_tokens": traces[i], "answer_token": answers[i], "pred": pred,
                         "format_fail": pred is None, "generation_limit_reached": limits[i],
+                        "cot_interrupted": interrupted[i], "forced_stop": forced_stop[i],
+                        "answer_constrained": pending_answer[i],
                         "tokens": prompt + generated[i], "filler_prefill": protocol == "filler"})
     return results

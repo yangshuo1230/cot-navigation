@@ -99,6 +99,9 @@ class MetricAccumulator:
             c["n_yes" if row["label"] == 1 else "n_no"] += 1
             c["n_correct"] += int(good)
             c["n_format_fail"] += int(row["format_fail"])
+            c['interrupted'] += int(row.get('cot_interrupted', False))
+            c['forced_stop'] += int(row.get('forced_stop', False))
+            c['interrupted_correct'] += int(good and row.get('cot_interrupted', False))
             c["yes_correct" if row["label"] == 1 else "no_correct"] += int(good)
         if "correct_prefix_tokens" in row:
             self.trace["n"] += 1
@@ -117,7 +120,10 @@ class MetricAccumulator:
         return {**{k: c[k] for k in ("n", "n_yes", "n_no", "n_correct", "n_format_fail")},
                 "answer_accuracy": c["n_correct"] / n,
                 "balanced_accuracy": None if yes is None or no is None else (yes + no) / 2,
-                "yes_recall": yes, "no_recall": no, "format_fail_rate": c["n_format_fail"] / n}
+                "yes_recall": yes, "no_recall": no, "format_fail_rate": c["n_format_fail"] / n,
+                "cot_interrupted_rate": c['interrupted'] / n, "forced_stop_rate": c['forced_stop'] / n,
+                "interrupted_accuracy": _recall(c['interrupted_correct'], c['interrupted']),
+                "uninterrupted_accuracy": _recall(c['n_correct'] - c['interrupted_correct'], n - c['interrupted'])}
 
     def result(self) -> dict:
         result = {"overall": self._finish(self.groups["overall"]["all"])}

@@ -1,0 +1,157 @@
+output_dir: outputs/task_only_n32_v1/placeholder/direct
+data:
+  knowledge: parametric_graph
+  n_nodes: 32
+  n_edges: 48
+  shapes:
+    main:
+      layers: 4
+      width: 8
+  splits:
+    train: 0
+    val: 0
+    test: 0
+  root: data/scale_v1/fixed_l4w8_n32_m48_s0
+  node_vocab: 256
+  data_seed: 0
+  graph_seeds:
+  - 0
+  max_attempts: 2000
+  workers: 1
+  chunk_size: 256
+  audit_fraction: 1.0
+  min_edge_coverage: 100
+  n_walks: 5000
+  walk_lengths:
+  - 1
+  - 2
+  - 3
+  - 4
+  query_ratios:
+  - 0.5
+  - 0.2
+  - 0.3
+  max_prepared_paths: 1000000
+  max_prepared_path_nodes: 20000000
+  graph_shape: main
+  graph_seed: 0
+  include_one_hop_queries: true
+  context_holdout_first: false
+model:
+  layers: 6
+  heads: 1
+  d_model: 128
+  d_ff: 512
+  activation: gelu
+  position_encoding: rope
+  max_seq_len: 4096
+  tie_embeddings: true
+  dropout: 0.0
+  ffn: standard
+  attn_impl: sdpa
+  compile: true
+  compile_mode: default
+  rope_base: 10000.0
+protocol:
+  name: direct
+  filler_tokens: null
+  negative_random_path: false
+  random_search_order: false
+  cot_margin: 8
+  trajectory_variants: 4
+train:
+  max_steps: 50000
+  effective_query_batch_size: 64
+  walk_batch_size: 16
+  lr: 0.001
+  min_lr: 0.0001
+  warmup_steps: 100
+  betas:
+  - 0.9
+  - 0.99
+  weight_decay: 0.01
+  grad_clip: 1.0
+  precision: bf16
+  eval_interval: 5000
+  save_interval: 5000
+  log_interval: 10
+  microbatch_size: 0
+  bucket_multiple: 64
+  pin_memory: true
+  max_tokens_per_microbatch: 16384
+  persist_outputs: true
+  deterministic: false
+  stage: B
+  exposure_seed: 0
+  keep_last: 3
+  eval_samples: 128
+  free_gen_samples: 64
+  model_seed: 0
+  fixed_query_pool: full
+  balance_query_labels: true
+  one_hop_fraction: 0.25
+  shuffle_context_edges: false
+  query_hops: all
+  curriculum_stage_steps: []
+  walk_loss_mode: fixed
+  walk_loss_weight: 1.0
+  walk_balance_decay: 0.98
+  scale_roots:
+  - data/scale_v1/fixed_l4w8_n32_m48_s0
+  scale_weights:
+  - 1.0
+  scale_stage_ends: []
+  scale_stage_weights: []
+  scale_walk_weights: []
+  world_roots:
+  - data/scale_v1/fixed_l4w4_n16_m24_s0/main-seed0
+  - data/scale_v1/fixed_l8w2_n16_m24_s0/main-seed0
+  - data/scale_v1/fixed_l2w8_n16_m24_s0/main-seed0
+  - data/scale_v1/fixed_l6w6_n36_m54_s0/main-seed0
+  - data/scale_v1/fixed_l12w3_n36_m54_s0/main-seed0
+  - data/scale_v1/fixed_l3w12_n36_m54_s0/main-seed0
+  - data/scale_v1/fixed_l8w8_n64_m96_s0/main-seed0
+  - data/scale_v1/fixed_l16w4_n64_m96_s0/main-seed0
+  - data/scale_v1/fixed_l4w16_n64_m96_s0/main-seed0
+  - data/scale_v1/fixed_l10w10_n100_m150_s0/main-seed0
+  - data/scale_v1/fixed_l20w5_n100_m150_s0/main-seed0
+  - data/scale_v1/fixed_l5w20_n100_m150_s0/main-seed0
+  - data/scale_v1/fixed_l12w12_n144_m216_s0/main-seed0
+  - data/scale_v1/fixed_l4w6_n24_m36_s0/main-seed0
+  - data/scale_v1/fixed_l4w8_n32_m48_s0/main-seed0
+  task_only: false
+tracking:
+  mode: online
+  project: cot-graph-reasoning
+  entity: null
+  name: task_only_n32_s0/direct
+  group: task_only_n32_s0
+  tags:
+  - task_only_n32
+  - walk_control
+  - n32_l4w8
+  notes: 'Matched single-N32 control: 1k Stage A WALK, then 50k QUERY+WALK. Same splits,
+    vocabulary, query/trajectory sampler seeds and task schedule as task-only.'
+  variant: walk_control_n32
+  online_failure: error
+  upload_artifacts: false
+  resume: allow
+runtime:
+  device: cuda
+  cuda_device: 0
+  probe_kernels: false
+  fused_adamw: auto
+  smoke: false
+evaluation:
+  batch_size: 16
+  seed: 1729
+  test_samples: 0
+  max_new_tokens: 0
+  fixed_query_view: full
+  selection_metric: balanced_accuracy
+  final_checkpoints:
+  - best
+  - last
+  extra_sets: []
+  selection_min_step: 0
+  trace_diagnostics: false

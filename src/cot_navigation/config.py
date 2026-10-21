@@ -89,6 +89,10 @@ class ProtocolConfig:
     filler_tokens: int | None = None
     negative_random_path: bool = False
     random_search_order: bool = False  # resample neighbor order per training exposure
+    # 0 disables truncation. Otherwise the supervised sequence ends at least
+    # this many positions before max_seq_len, after <STOP> and YES/NO/EOS.
+    cot_margin: int = 0
+    trajectory_variants: int = 0  # offline randomized traces; 0 keeps legacy behavior
 
 
 @dataclass
@@ -113,6 +117,8 @@ class TrainConfig:
     persist_outputs: bool = True
     deterministic: bool = False
     stage: str = "context"
+    task_only: bool = False  # fixed-graph tasks from random init; no Stage A or WALK
+    skip_knowledge_stage: bool = False  # random fixed-graph init; task-stage WALK is allowed
     exposure_seed: int = 0
     keep_last: int = 3
     eval_samples: int = 64
@@ -127,6 +133,14 @@ class TrainConfig:
     walk_loss_mode: str = "fixed"  # fixed | balanced | none (Stage B only)
     walk_loss_weight: float = 1.0
     walk_balance_decay: float = 0.98
+    # Optional mixture of same-knowledge datasets. data.root must be one entry.
+    # Stage weights are flattened stage-major and align with scale_roots.
+    scale_roots: tuple[str, ...] = ()
+    scale_weights: tuple[float, ...] = ()
+    scale_stage_ends: tuple[int, ...] = ()
+    scale_stage_weights: tuple[float, ...] = ()
+    scale_walk_weights: tuple[float, ...] = ()  # optional knowledge-only worlds
+    world_roots: tuple[str, ...] = ()  # fixed-world identity vocabulary, shared by tasks
 
 
 @dataclass
@@ -165,6 +179,10 @@ class EvaluationConfig:
     fixed_query_view: str = "balanced"  # balanced | full; affects val/test only
     selection_metric: str = "answer_accuracy"
     final_checkpoints: tuple[str, ...] = ()  # optional full test after training
+    # name=path entries. Context path is a dataset root; fixed path is a world dir.
+    extra_sets: tuple[str, ...] = ()
+    selection_min_step: int = 0  # free-gen val before this step cannot select best
+    trace_diagnostics: bool = True  # field-level DFS/BFS comparison during free eval
 
 
 @dataclass
@@ -224,6 +242,7 @@ class AppConfig:
         _require(self.protocol.filler_tokens is None or self.protocol.filler_tokens > 0, "filler_tokens")
         _require(not self.protocol.negative_random_path or self.protocol.name == "path", "negative_random_path requires path")
         _require(not self.protocol.random_search_order or self.protocol.name in {"dfs_state", "dfs_nodes", "bfs_state", "bfs_nodes"}, "random_search_order requires a search protocol")
+        _require(0 <= self.protocol.cot_margin < self.model.max_seq_len, "cot_margin")
         _require(self.model.ffn in {"standard", "shared_dense"}, "model.ffn")
         if self.model.ffn not in {"standard", "shared_dense"}:
             raise ConfigError("unsupported ffn")
@@ -238,6 +257,12 @@ class AppConfig:
             raise ConfigError("layers/heads must be positive")
         _require(self.model.tie_embeddings, "this project ties embeddings; set tie_embeddings true")
         _require(self.train.bucket_multiple >= 1, "bucket_multiple")
+        _require(self.protocol.cot_margin >= 0 and self.protocol.trajectory_variants >= 0, 'CoT cache/margin')
+        if self.protocol.cot_margin:
+            _require(max_prompt_tokens(self.data) + 3 + bool(self.train.world_roots)
+                     <= self.model.max_seq_len - self.protocol.cot_margin, 'prompt must leave STOP/answer space')
+        _require(not self.train.world_roots or self.data.knowledge == 'parametric_graph', 'world_roots requires fixed graphs')
+        _require(len(set(self.train.world_roots)) == len(self.train.world_roots), 'duplicate world_roots')
         worst = _worst_sequence_len(self)
         worst = ((worst + self.train.bucket_multiple - 1) // self.train.bucket_multiple) * self.train.bucket_multiple
         if worst > self.model.max_seq_len:
@@ -254,6 +279,15 @@ class AppConfig:
         _require(self.train.query_hops in {"all", "one_hop", "curriculum"}, "query_hops")
         _require(self.train.walk_loss_mode in {"fixed", "balanced", "none"}, "walk_loss_mode")
         _require(self.train.walk_loss_weight >= 0, "walk_loss_weight")
+        if self.train.task_only:
+            _require(self.data.knowledge == "parametric_graph" and self.train.stage == "B"
+                     and self.train.walk_loss_mode == "none",
+                     "task_only requires fixed Stage B with walk_loss_mode=none")
+        if self.train.skip_knowledge_stage:
+            _require(self.data.knowledge == "parametric_graph" and self.train.stage == "B",
+                     "skip_knowledge_stage requires fixed Stage B")
+            _require(not self.train.task_only,
+                     "use task_only alone for the no-WALK random-init setup")
         _require(0 <= self.train.walk_balance_decay < 1, "walk_balance_decay")
         if self.train.query_hops == "curriculum" and self.train.stage != "A":
             hops = max(s.layers for s in self.data.shapes.values()) - 1
@@ -267,6 +301,30 @@ class AppConfig:
         _require(self.evaluation.fixed_query_view in {"balanced", "full"}, "fixed_query_view")
         _require(self.evaluation.selection_metric in {"answer_accuracy", "balanced_accuracy"}, "selection_metric")
         _require(all(x in {"best", "last"} for x in self.evaluation.final_checkpoints), "final_checkpoints")
+        _require(self.evaluation.selection_min_step >= 0, "selection_min_step")
+        for spec in self.evaluation.extra_sets:
+            name, sep, path = spec.partition("=")
+            _require(bool(name) and bool(sep) and bool(path) and "/" not in name, f"extra set must be name=path, got {spec}")
+        roots = self.train.scale_roots
+        if self.train.scale_walk_weights:
+            _require(len(self.train.scale_walk_weights) == len(roots)
+                     and all(x >= 0 for x in self.train.scale_walk_weights)
+                     and sum(self.train.scale_walk_weights) > 0, 'scale_walk_weights')
+        if roots or self.train.scale_weights or self.train.scale_stage_ends or self.train.scale_stage_weights:
+            _require(len(roots) >= 1 and self.data.root in roots, "data.root must be one of train.scale_roots")
+            ends = self.train.scale_stage_ends
+            if ends:
+                _require(all(ends[i] < ends[i + 1] for i in range(len(ends) - 1)) and ends[-1] == self.train.max_steps,
+                         "scale_stage_ends must increase and finish at max_steps")
+                _require(len(self.train.scale_stage_weights) == len(ends) * len(roots), "scale_stage_weights")
+                width = len(roots)
+                for index in range(len(ends)):
+                    chunk = self.train.scale_stage_weights[index * width:(index + 1) * width]
+                    _require(all(item >= 0 for item in chunk) and sum(chunk) > 0, "each scale stage needs a positive weight sum")
+            else:
+                _require(len(self.train.scale_weights) == len(roots)
+                         and all(item >= 0 for item in self.train.scale_weights)
+                         and sum(self.train.scale_weights) > 0, "scale_weights")
         _require(self.train.microbatch_size >= 0 and self.train.max_tokens_per_microbatch >= 0, "microbatch limits")
         _require(self.evaluation.batch_size >= 1 and self.evaluation.test_samples >= 0
                  and self.evaluation.max_new_tokens >= 0, "evaluation limits")
@@ -334,7 +392,11 @@ def _worst_sequence_len(cfg: AppConfig) -> int:
     else:
         body = dfs_body_bound(cfg.data)
     longest = prompt + body + ANSWER_TAIL_TOKENS
-    return max(longest, max(cfg.data.walk_lengths) + 3) if cfg.train.stage == "B" else longest
+    if cfg.train.stage == "B":
+        longest = max(longest, max(cfg.data.walk_lengths) + 3)
+    if cfg.protocol.cot_margin:
+        longest = min(longest, cfg.model.max_seq_len - cfg.protocol.cot_margin)
+    return longest
 
 
 def load_config(paths: list[str | Path], overrides: list[str] | None = None) -> AppConfig:
@@ -453,7 +515,8 @@ def _app_from_dict(raw: Mapping[str, Any]) -> AppConfig:
         tracking=_tracking_from_dict(raw.get("tracking", {})),
         runtime=_runtime_from_dict(raw.get("runtime", {})),
         evaluation=_fill(EvaluationConfig, raw.get("evaluation", {}), "evaluation",
-                         {"final_checkpoints": lambda v: tuple(str(x) for x in v)}),
+                         {"final_checkpoints": lambda v: tuple(str(x) for x in v),
+                          "extra_sets": lambda v: tuple(str(x) for x in v)}),
     )
 
 
@@ -562,7 +625,13 @@ def _train_from_dict(raw: Mapping[str, Any]) -> TrainConfig:
         raw,
         "train",
         {"betas": lambda v: _as_float_tuple(v, 2, "train.betas"),
-         "curriculum_stage_steps": lambda v: (() if v == [] or v == () else _as_int_tuple(v, "curriculum_stage_steps"))},
+         "curriculum_stage_steps": lambda v: (() if v == [] or v == () else _as_int_tuple(v, "curriculum_stage_steps")),
+         "scale_roots": lambda v: tuple(str(x) for x in v),
+         "scale_weights": lambda v: tuple(float(x) for x in v),
+         "scale_stage_ends": lambda v: tuple(int(x) for x in v),
+         "scale_stage_weights": lambda v: tuple(float(x) for x in v),
+         "scale_walk_weights": lambda v: tuple(float(x) for x in v),
+         "world_roots": lambda v: tuple(str(x) for x in v)},
     )
 
 

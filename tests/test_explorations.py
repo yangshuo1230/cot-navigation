@@ -111,10 +111,37 @@ def test_curriculum_stages_replay_hops_and_labels_equally_and_resume():
         assert set(h for h,l in counts)==set(range(1,stage+1))
         assert max(counts.values())-min(counts.values())<=1
     saved = sampler.state_dict()
+    saved.pop('negative_fallbacks')  # existing checkpoints predate this metadata
     expected = sampler.next()
     resumed = HopCurriculumSampler(distances,labels,64,5,(3,3,3))
     resumed.load_state_dict(saved)
     assert resumed.next()==expected
+
+
+def test_curriculum_missing_negative_uses_only_shorter_training_negatives():
+    distances=np.array([1,1,2,2,3,3,4,4])
+    labels=np.array([0,1,0,1,1,1,0,1])
+    with pytest.warns(RuntimeWarning,match='stratum 3/0'):
+        sampler=HopCurriculumSampler(distances,labels,12,5,(1,1,2))
+    assert sampler.groups['3/0'].tolist()==[0,2]  # excludes future hop4 negative
+    assert sampler.negative_fallbacks['3/0']['source_hops']==[1,2]
+    sampler.next();sampler.next()
+    ids=sampler.next()
+    assert len(ids)==12 and sum(labels[ids])==6
+    assert set(distances[ids])=={1,2,3}
+    assert all(sum((distances[ids]==h)&(labels[ids]==1))==2 for h in (1,2,3))
+    saved=sampler.state_dict();expected=sampler.next()
+    with pytest.warns(RuntimeWarning):
+        resumed=HopCurriculumSampler(distances,labels,12,5,(1,1,2))
+    resumed.load_state_dict(saved)
+    assert resumed.next()==expected
+
+
+def test_curriculum_does_not_relax_positive_hops_or_use_future_negatives():
+    with pytest.raises(ValueError,match='stratum 2/1'):
+        HopCurriculumSampler([1,1,2],[0,1,0],12,5,(1,1))
+    with pytest.raises(ValueError,match='stratum 1/0'):
+        HopCurriculumSampler([1,2,2],[1,0,1],12,5,(1,1))
 
 
 def suite():

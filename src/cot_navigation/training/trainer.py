@@ -14,6 +14,8 @@ import math
 import random
 import time
 import uuid
+import hashlib
+from dataclasses import dataclass, replace
 from itertools import islice
 from pathlib import Path
 
@@ -28,6 +30,7 @@ from cot_navigation.evaluation.metrics import MetricAccumulator, prefix_length
 from cot_navigation.evaluation.sampling import stratified_ids
 from cot_navigation.evaluation.rollout import generate
 from cot_navigation.models.transformer import build_model
+from cot_navigation.protocols.render import truncate_example
 from cot_navigation.protocols.tokenizer import Tokenizer
 from cot_navigation.protocols.validate_trace import parse_completed_steps, compare_completed
 from cot_navigation.runtime.envcheck import probe_environment
@@ -40,13 +43,24 @@ from cot_navigation.training.checkpoint import (
     save_training_checkpoint,
 )
 from cot_navigation.training.loss import combine_losses
-from cot_navigation.training.sampler import FixedQuerySampler, IndexSampler, HopCurriculumSampler
+from cot_navigation.training.sampler import FixedQuerySampler, IndexSampler, HopCurriculumSampler, ScaleMixtureSampler
 from cot_navigation.training.augmentation import transform
 from cot_navigation.training.schedule import WarmupCosine
 
 
 class TrainError(RuntimeError):
     pass
+
+
+@dataclass
+class ScaleMember:
+    root: str
+    store: object
+    world: object
+    train_ids: np.ndarray
+    n_walks: int
+    prepared_tasks: object = None
+    prepared_walks: object = None
 
 
 def _optimizer(model, cfg, device: torch.device):
@@ -102,6 +116,8 @@ def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
         "query_batch": cfg.train.effective_query_batch_size,
         "walk_batch": cfg.train.walk_batch_size,
         "stage": cfg.train.stage,
+        "task_only": cfg.train.task_only,
+        "skip_knowledge_stage": cfg.train.skip_knowledge_stage,
         "knowledge": cfg.data.knowledge,
         "graph_shape": cfg.data.graph_shape,
         "graph_seed": cfg.data.graph_seed,
@@ -127,6 +143,17 @@ def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
         "walk_balance_decay": cfg.train.walk_balance_decay,
         "negative_random_path": cfg.protocol.negative_random_path,
         "random_search_order": cfg.protocol.random_search_order,
+        "cot_margin": cfg.protocol.cot_margin,
+        "trace_diagnostics": cfg.evaluation.trace_diagnostics,
+        "scale_roots": list(cfg.train.scale_roots),
+        "scale_weights": list(cfg.train.scale_weights),
+        "scale_stage_ends": list(cfg.train.scale_stage_ends),
+        "scale_stage_weights": list(cfg.train.scale_stage_weights),
+        "scale_walk_weights": list(cfg.train.scale_walk_weights),
+        "world_roots": list(cfg.train.world_roots),
+        "trajectory_variants": cfg.protocol.trajectory_variants,
+        "selection_min_step": cfg.evaluation.selection_min_step,
+        "extra_sets": list(cfg.evaluation.extra_sets),
     }
 
 
@@ -138,7 +165,11 @@ def _check_resume(saved: dict, current: dict) -> list[str]:
                          "query_hops": "all", "curriculum_stage_steps": [],
                          "walk_loss_mode": "fixed", "walk_loss_weight": 1.0,
                          "walk_balance_decay": 0.98, "negative_random_path": False,
-                         "random_search_order": False}.items():
+                         "random_search_order": False, "cot_margin": 0,
+                         "trace_diagnostics": True, "scale_roots": [], "scale_weights": [],
+                         "scale_stage_ends": [], "scale_stage_weights": [],
+                         "scale_walk_weights": [], "world_roots": [], "trajectory_variants": 0,
+                         "selection_min_step": 0, "extra_sets": [], "task_only": False, "skip_knowledge_stage": False}.items():
         saved.setdefault(key, default)
     if saved.get("checkpoint_version") != current["checkpoint_version"]:
         raise TrainError("legacy checkpoint is incompatible with this data/path sampling version; start a new run")
@@ -179,7 +210,11 @@ class Trainer:
         cfg.validate()
         if sum(x is not None for x in (resume, init_from, init_state, evaluation_checkpoint)) > 1:
             raise TrainError("resume, stage initialization and evaluation checkpoint are distinct operations")
-        if cfg.train.stage == "B" and all(x is None for x in (resume, init_from, init_state, evaluation_checkpoint)):
+        random_fixed_init = cfg.train.task_only or cfg.train.skip_knowledge_stage
+        if random_fixed_init and (init_from is not None or init_state is not None):
+            raise TrainError("random fixed-graph training forbids pretrained stage initialization")
+        if (cfg.train.stage == "B" and not random_fixed_init
+                and all(x is None for x in (resume, init_from, init_state, evaluation_checkpoint))):
             raise TrainError("stage B requires a shared stage-A checkpoint via init_from/init_state, or resume")
         self.cfg = cfg
         self.persist = cfg.train.persist_outputs
@@ -195,13 +230,19 @@ class Trainer:
         if self.device.type == "cuda" and cfg.train.precision == "fp32":
             torch.backends.cuda.matmul.allow_tf32 = False
             torch.backends.cudnn.allow_tf32 = False
-        self.tok = Tokenizer(cfg.data.node_vocab)
+        self.tok = Tokenizer.from_config(cfg)
         self.store = None
         self.world = None
+        self.scale_members: list[ScaleMember] = []
+        self._active_member = "primary"
+        self._fixed_graphs = {}
         self._load_data()
         self.render_cache: dict = {}
         self._preload_training_rows()
         self.manifest_hash = self.store.fingerprint if self.store is not None else self.world.fingerprint
+        if self.scale_members:
+            value = [(m.root, (m.store if m.store is not None else m.world).fingerprint) for m in self.scale_members]
+            self.manifest_hash = hashlib.sha256(json.dumps(value).encode()).hexdigest()
         torch.manual_seed(cfg.train.model_seed)
         np.random.seed(cfg.train.model_seed)
         random.seed(cfg.train.model_seed)
@@ -232,7 +273,8 @@ class Trainer:
         if cfg.model.compile:
             if self.device.type != "cuda":
                 raise TrainError("torch.compile training path is implemented for CUDA")
-            self.model = torch.compile(self.raw, mode=cfg.model.compile_mode)
+            self.model = torch.compile(self.raw, mode=cfg.model.compile_mode,
+                                       **({'dynamic': True} if cfg.protocol.trajectory_variants else {}))
         env = probe_environment(probe_kernels=cfg.runtime.probe_kernels and self.device.type == "cuda")
         env["optimizer"] = self.opt_info
         env["parameters"] = self.raw.report()
@@ -254,6 +296,7 @@ class Trainer:
             if cfg.train.query_hops == "one_hop":
                 self.train_ids = self.train_ids[self.store.arrays["distance"][self.train_ids] == 1]
             self.val_ids = self.store.indices("val")
+            self._load_scale_members()
             return
         if cfg.data.graph_shape is None or cfg.data.graph_seed is None:
             raise TrainError("parametric training requires data.graph_shape and data.graph_seed")
@@ -262,6 +305,7 @@ class Trainer:
         if cfg.train.stage == "A":
             self.train_ids = np.arange(self.world.n_walks(), dtype=np.int64)
             self.val_ids = np.zeros(0, dtype=np.int64)
+            self._load_scale_members()
             return
         ids = self.world.indices("train", "multi_hop" if cfg.train.fixed_query_pool == "full" else "balanced")
         if cfg.train.one_hop_fraction > 0 or cfg.train.query_hops != "all":
@@ -272,12 +316,105 @@ class Trainer:
             raise TrainError(f"balanced train query pool is empty in {world}")
         self.train_ids = ids.astype(np.int64)
         self.val_ids = self.world.indices("val", cfg.evaluation.fixed_query_view)
+        self._load_scale_members()
+
+    def _load_scale_members(self) -> None:
+        roots = self.cfg.train.scale_roots
+        if not roots:
+            return
+        parametric = self.cfg.data.knowledge == "parametric_graph"
+        for root in roots:
+            if not parametric:
+                store = self.store if root == self.cfg.data.root else ContextStore(root)
+                self.scale_members.append(ScaleMember(root, store, None, store.indices("train"), 0))
+                continue
+            if root == self.cfg.data.root and self.world is not None:
+                world = self.world
+            else:
+                world_dir = Path(root) / f"{self.cfg.data.graph_shape}-seed{self.cfg.data.graph_seed}"
+                world = ParametricWorld(world_dir, include_queries=self.cfg.train.stage != "A")
+            if self.cfg.train.stage == "A":
+                ids = np.arange(world.n_walks(), dtype=np.int64)
+            else:
+                view = "multi_hop" if self.cfg.train.fixed_query_pool == "full" else "balanced"
+                ids = world.indices("train", view).astype(np.int64)
+                if self.cfg.train.one_hop_fraction > 0 or self.cfg.train.query_hops != 'all':
+                    ids = np.concatenate([ids, world.indices('train', 'one_hop')])
+                if self.cfg.train.query_hops == 'one_hop':
+                    ids = ids[world.queries['distance'][ids] == 1]
+                if ids.size == 0:
+                    raise TrainError(f"scale member {root} has no training queries")
+            self.scale_members.append(ScaleMember(root, None, world, ids, world.n_walks()))
+
+    def _primary_member(self) -> ScaleMember:
+        for member in self.scale_members:
+            if member.root == self.cfg.data.root:
+                return member
+        raise TrainError("data.root is missing from the scale mixture")
+
+    def _activate(self, member: ScaleMember) -> None:
+        self._active_member = member.root
+        self.store = member.store
+        self.world = member.world
+        self.prepared_tasks = member.prepared_tasks
+        self.prepared_walks = member.prepared_walks
+
+    def _scale_weights(self):
+        ends = self.cfg.train.scale_stage_ends
+        width = len(self.scale_members)
+        if not ends:
+            return self.cfg.train.scale_weights
+        stage = int(np.searchsorted(ends, self.completed, side="right"))
+        stage = min(stage, len(ends) - 1)
+        start = stage * width
+        return self.cfg.train.scale_stage_weights[start:start + width]
+
+    def _sync_scale_weights(self) -> None:
+        if not getattr(self, "scale_members", None):
+            return
+        weights = self._scale_weights()
+        for sampler in (self.query_sampler, self.walk_sampler):
+            if isinstance(sampler, ScaleMixtureSampler):
+                sampler.set_weights(self.cfg.train.scale_walk_weights
+                                    if sampler is self.walk_sampler and self.cfg.train.scale_walk_weights else weights)
 
     def _init_samplers(self) -> None:
         seed = self.cfg.train.exposure_seed
         stage = self.cfg.train.stage
         self.query_sampler = None
         self.walk_sampler = None
+        if getattr(self, "scale_members", None):
+            weights = self._scale_weights()
+            if stage != "A":
+                self.query_sampler = ScaleMixtureSampler(
+                    [len(member.train_ids) for member in self.scale_members],
+                    self.cfg.train.effective_query_batch_size, seed + 3, weights)
+                if self.world is not None and (self.cfg.train.one_hop_fraction or self.cfg.train.balance_query_labels):
+                    from cot_navigation.training.sampler import BufferedSampler
+                    # WALK-only worlds may lack query strata. Keep their unused
+                    # index sampler, but include every future curriculum stage
+                    # when deciding whether a balanced query sampler is needed.
+                    width = len(self.scale_members)
+                    schedule = self.cfg.train.scale_stage_weights or weights
+                    for i, m in enumerate(self.scale_members):
+                        if not any(weight > 0 for weight in schedule[i::width]):
+                            continue
+                        self.query_sampler.samplers[i] = BufferedSampler(FixedQuerySampler(
+                            m.world.queries['distance'][m.train_ids], m.world.queries['label'][m.train_ids],
+                            self.cfg.train.effective_query_batch_size, seed + 103 + i,
+                            self.cfg.train.one_hop_fraction, self.cfg.train.balance_query_labels))
+            if stage == "A" or (stage == "B" and self.cfg.train.walk_loss_mode != "none"):
+                self.walk_sampler = ScaleMixtureSampler(
+                    [member.n_walks for member in self.scale_members],
+                    self.cfg.train.walk_batch_size if stage != "A" else self.cfg.train.walk_batch_size,
+                    seed + 17, weights)
+                if self.cfg.train.scale_walk_weights:
+                    self.walk_sampler.set_weights(self.cfg.train.scale_walk_weights)
+            self.augmentation_rngs = {name: np.random.default_rng(seed + offset) for name, offset in
+                                     (("edges", 701), ("search", 709), ("negative", 719), ("trajectory", 727))}
+            self.path_rng = (np.random.default_rng(seed + 29)
+                             if stage == "B" and self.cfg.protocol.name == "path" else None)
+            return
         # Independent streams: adding a trace augmentation cannot change query,
         # walk, positive-path, or edge-presentation exposure in another branch.
         self.augmentation_rngs = {name: np.random.default_rng(seed + offset) for name, offset in
@@ -317,6 +454,11 @@ class Trainer:
         Online experiments transform these immutable rows after sampling.
         """
         self.prepared_tasks = self.prepared_walks = None
+        if getattr(self, "scale_members", None):
+            for member in self.scale_members:
+                self._preload_member(member)
+            self._activate(self._primary_member())
+            return
         source = self.store if self.store is not None else self.world
         if self.cfg.train.stage != "A":
             try:
@@ -334,6 +476,38 @@ class Trainer:
             except FileNotFoundError:
                 pass
             for index in range(self.world.n_walks()):
+                self._render_walk(index)
+
+    def _preload_member(self, member: ScaleMember) -> None:
+        source = member.store if member.store is not None else member.world
+        cfg = self.cfg
+        if cfg.train.stage != "A":
+            try:
+                if cfg.protocol.trajectory_variants:
+                    from cot_navigation.data.scale_prepared import ScalePreparedRows
+                    member.prepared_tasks = ScalePreparedRows(source, cfg, self.tok)
+                else:
+                    member.prepared_tasks = PreparedRows(source, cfg.protocol.name, self.tok, filler_length(cfg))
+            except FileNotFoundError:
+                if cfg.protocol.trajectory_variants:
+                    raise
+                member.prepared_tasks = None
+            self._activate(member)
+            for index in member.train_ids:
+                if cfg.protocol.trajectory_variants:
+                    variants = member.prepared_tasks.variants(int(index))
+                else:
+                    variants = (max(1, member.world.path_count(int(index)))
+                                if member.world is not None and cfg.protocol.name == "path" else 1)
+                for path_index in range(variants):
+                    self._render_task(int(index), path_index=path_index)
+        if member.world is not None and (cfg.train.stage == "A" or cfg.train.walk_loss_mode != "none"):
+            try:
+                member.prepared_walks = PreparedRows(source, "walk", self.tok)
+            except FileNotFoundError:
+                member.prepared_walks = None
+            self._activate(member)
+            for index in range(member.n_walks):
                 self._render_walk(index)
 
     def _load_init(self, path: str) -> None:
@@ -448,6 +622,14 @@ class Trainer:
     def _training_task(self, index: int):
         """Sample a route within a sampled training query, never across queries."""
         path_index = 0
+        if self.cfg.protocol.trajectory_variants:
+            path_index = int(self.augmentation_rngs['trajectory'].integers(self.prepared_tasks.variants(index)))
+            row = self._render_task(index, path_index=path_index)
+            if self.cfg.train.shuffle_context_edges and self.store is not None:
+                edges = np.asarray(row.tokens[:row.prompt_len - 4]).reshape(-1, 3)
+                prompt = edges[self.augmentation_rngs['edges'].permutation(len(edges))].ravel().tolist() + row.tokens[row.prompt_len - 4:row.prompt_len]
+                row = replace(row, tokens=prompt + row.tokens[row.prompt_len:])
+            return row
         if self.path_rng is not None:
             if int(self.world.queries["split"][index]) != 0:
                 raise TrainError("held-out queries cannot be sampled for training")
@@ -463,23 +645,43 @@ class Trainer:
             adj, nodes, src, dst = self._graph_fields(index)
             row = transform(row, cfg.protocol.name, self.tok, adj, nodes, src, dst,
                             edge_rng=edges, search_rng=search, negative_rng=negative)
-            self._check_length(row)
-        return row
+        return self._fit_context(row)
+
+    def _fit_context(self, rendered):
+        rendered = truncate_example(rendered, self.tok, self.cfg.model.max_seq_len, self.cfg.protocol.cot_margin)
+        self._check_length(rendered)
+        return rendered
 
     def _graph_fields(self, index):
         if self.store is not None:
             arrays = self.store.arrays
             return (self.store.adj(index), self.store.node_vocab_ids(index, self.tok),
                     int(arrays["s_topo"][index]), int(arrays["t_topo"][index]))
-        # A fixed world's adjacency and vocabulary mapping never change.
-        if not hasattr(self, "_fixed_graph_fields"):
-            self._fixed_graph_fields = self.world.adj(), self.world.node_vocab_ids(self.tok)
-        adj, nodes = self._fixed_graph_fields
+        # Each fixed world keeps its own adjacency. Mixing scales must not reuse another graph.
+        graphs = self.__dict__.setdefault("_fixed_graphs", {})
+        key = id(self.world)
+        if key not in graphs:
+            graphs[key] = self.world.adj(), self.world.node_vocab_ids(self.tok)
+        adj, nodes = graphs[key]
         return adj, nodes, int(self.world.queries["s_topo"][index]), int(self.world.queries["t_topo"][index])
+
+    def _world_prefix(self, rendered):
+        if not self.cfg.train.world_roots or self.world is None:
+            return rendered
+        roots = [Path(p).resolve() for p in self.cfg.train.world_roots]
+        try:
+            index = roots.index(self.world.root.resolve())
+        except ValueError:
+            raise TrainError(f'unknown fixed-world identity {self.world.root}') from None
+        token = self.tok.id(f'<WORLD_{index}>')
+        return replace(rendered, tokens=[token] + rendered.tokens, prompt_len=rendered.prompt_len + 1,
+                       answer_index=rendered.answer_index + 1 if rendered.answer_index >= 0 else -1,
+                       trace_indices=[i + 1 for i in rendered.trace_indices],
+                       walk_indices=[i + 1 for i in rendered.walk_indices])
 
     def _render_task(self, index: int, *, path_index: int = 0):
         # Validation uses path zero and never draws from the training RNG.
-        key = ("task", int(index), self.cfg.protocol.name, filler_length(self.cfg), path_index)
+        key = ("task", getattr(self, "_active_member", "primary"), int(index), self.cfg.protocol.name, filler_length(self.cfg), path_index)
         cached = self.render_cache.get(key)
         if cached is not None:
             return cached
@@ -490,11 +692,11 @@ class Trainer:
         else:
             rendered = self.world.render_query(int(index), self.cfg.protocol.name, self.tok,
                                                filler_tokens=filler_length(self.cfg), path_index=path_index)
-        if self.cfg.protocol.negative_random_path and rendered.label == 0:
+        if self.cfg.protocol.negative_random_path and rendered.label == 0 and not self.cfg.protocol.trajectory_variants:
             adj, nodes, src, dst = self._graph_fields(index)
             rendered = transform(rendered, "path", self.tok, adj, nodes, src, dst,
                                  negative_rng=np.random.default_rng(self.cfg.evaluation.seed + index))
-        self._check_length(rendered)
+        rendered = self._fit_context(self._world_prefix(rendered))
         self.render_cache[key] = rendered
         return rendered
 
@@ -506,12 +708,13 @@ class Trainer:
                              f"{self.cfg.model.max_seq_len}; no samples were truncated")
 
     def _render_walk(self, index: int):
-        key = ("walk", int(index))
+        key = ("walk", getattr(self, "_active_member", "primary"), int(index))
         cached = self.render_cache.get(key)
         if cached is not None:
             return cached
         rendered = (self.prepared_walks.row(int(index)) if getattr(self, "prepared_walks", None) is not None
                     else self.world.render_walk(int(index), self.tok))
+        rendered = self._world_prefix(rendered)
         self._check_length(rendered)
         self.render_cache[key] = rendered
         return rendered
@@ -523,18 +726,33 @@ class Trainer:
         walk_rows = []
         n_task = 0
         n_walk = 0
+        self._sync_scale_weights()
+        global_ids = None
         if self.query_sampler is not None:
-            local = self.query_sampler.next()
-            global_ids = [int(self.train_ids[i]) for i in local]
-            task_rows = [self._training_task(i) for i in global_ids]
+            if self.scale_members:
+                task_rows = []
+                for member, local in self.query_sampler.next():
+                    chosen = self.scale_members[member]
+                    self._activate(chosen)
+                    task_rows.append(self._training_task(int(chosen.train_ids[local])))
+            else:
+                local = self.query_sampler.next()
+                global_ids = [int(self.train_ids[i]) for i in local]
+                task_rows = [self._training_task(i) for i in global_ids]
             n_task = len(task_rows)
         if self.walk_sampler is not None:
-            local = self.walk_sampler.next()
-            if cfg.train.stage == "A":
-                global_walks = [int(self.train_ids[i]) for i in local]
+            if self.scale_members:
+                walk_rows = []
+                for member, local in self.walk_sampler.next():
+                    self._activate(self.scale_members[member])
+                    walk_rows.append(self._render_walk(int(local)))
             else:
-                global_walks = local
-            walk_rows = [self._render_walk(i) for i in global_walks]
+                local = self.walk_sampler.next()
+                if cfg.train.stage == "A":
+                    global_walks = [int(self.train_ids[i]) for i in local]
+                else:
+                    global_walks = local
+                walk_rows = [self._render_walk(i) for i in global_walks]
             n_walk = len(walk_rows)
         task_chunks = _chunk(task_rows, cfg.train.microbatch_size, cfg.train.max_tokens_per_microbatch, cfg.train.bucket_multiple)
         walk_chunks = _chunk(walk_rows, cfg.train.microbatch_size, cfg.train.max_tokens_per_microbatch, cfg.train.bucket_multiple)
@@ -606,9 +824,13 @@ class Trainer:
         metrics["total_loss"] = float(sum(item["backward_total"] for item in parts_list))
         if n_task:
             metrics["task_loss"] = metrics["answer_loss"] + metrics.get("trace_loss", 0.0)
-            distances = (self.store.arrays if self.store is not None else self.world.queries)["distance"]
-            for hop in np.unique(distances[global_ids]):
-                metrics[f"train_hops/{int(hop)}_fraction"] = float(np.mean(distances[global_ids] == hop))
+            if self.scale_members:
+                distances = np.asarray([row.meta.get("distance", -1) for row in task_rows])
+                metrics["scale_stage"] = int(np.searchsorted(self.cfg.train.scale_stage_ends, self.completed, side="right")) + 1 if self.cfg.train.scale_stage_ends else 1
+            else:
+                distances = (self.store.arrays if self.store is not None else self.world.queries)["distance"][global_ids]
+            for hop in np.unique(distances):
+                metrics[f"train_hops/{int(hop)}_fraction"] = float(np.mean(distances == hop))
             if isinstance(self.query_sampler, HopCurriculumSampler):
                 # .step already points at the next batch; report the stage used.
                 metrics["curriculum_stage"] = int(np.searchsorted(self.query_sampler.ends, self.query_sampler.step-1, side="right"))+1
@@ -643,6 +865,8 @@ class Trainer:
     def _evaluate(self, kind: str) -> None:
         if self.val_ids.size == 0 or self.cfg.train.stage == "A":
             return
+        if self.scale_members:
+            self._activate(self.scale_members[int(np.argmax(self._scale_weights()))])
         self.raw.eval()
         self.model.eval()
         limit = self.cfg.train.eval_samples if kind == "teacher_forced" else self.cfg.train.free_gen_samples
@@ -662,7 +886,8 @@ class Trainer:
         # Gold traces can disclose the answer. Only free-rollout final answers
         # select the main best checkpoint; teacher forcing is diagnostic.
         score = packed["overall"].get(self.cfg.evaluation.selection_metric)
-        if kind == "free" and score is not None and score > self.best_score:
+        if (kind == "free" and score is not None and self.completed >= self.cfg.evaluation.selection_min_step
+                and score > self.best_score):
             self.best_score = float(score)
             if self.persist:
                 save_best(self.out / "checkpoints", self._payload())
@@ -707,6 +932,30 @@ class Trainer:
         self.tracker.log(self.completed, {f"{prefix}/{k}": v for k, v in _flatten_numbers(report).items()})
         return report
 
+    def _evaluate_extra(self, tag: str, step: int, spec: str) -> None:
+        name, path = spec.split("=", 1)
+        saved = (self.store, self.world, self.prepared_tasks, self.prepared_walks,
+                 self._active_member, self.render_cache)
+        self.render_cache = {}
+        self.prepared_tasks = None
+        self.prepared_walks = None
+        try:
+            if self.cfg.data.knowledge == "context_graph":
+                self.store = ContextStore(path)
+                self.world = None
+            else:
+                self.store = None
+                self.world = ParametricWorld(path, include_queries=True)
+            self._active_member = f"extra:{name}"
+            if self.cfg.protocol.trajectory_variants:
+                from cot_navigation.data.scale_prepared import ScalePreparedRows
+                source = self.store if self.store is not None else self.world
+                self.prepared_tasks = ScalePreparedRows(source, self.cfg, self.tok)
+            self.evaluate_split("test", checkpoint_tag=f"{tag}-{name}", checkpoint_step=step)
+        finally:
+            (self.store, self.world, self.prepared_tasks, self.prepared_walks,
+             self._active_member, self.render_cache) = saved
+
     def _evaluate_final_checkpoints(self):
         """Select on val, test once, and retain last weights and optimizer state.
 
@@ -714,6 +963,8 @@ class Trainer:
         Test metrics cannot select a checkpoint or affect training samplers.
         """
         tags = tuple(dict.fromkeys(self.cfg.evaluation.final_checkpoints))
+        if self.scale_members:
+            self._activate(self._primary_member())
         try:
             for tag in tags:
                 path = self.out / "checkpoints" / ("latest.pt" if tag == "last" else "best.pt")
@@ -721,7 +972,10 @@ class Trainer:
                     raise TrainError(f"missing {tag} checkpoint for final evaluation; enable free validation/save")
                 blob = load_checkpoint(path, map_location="cpu")
                 self.raw.load_state_dict(blob["model"])
-                self.evaluate_split("test", checkpoint_tag=tag, checkpoint_step=int(blob["step"]))
+                step = int(blob["step"])
+                self.evaluate_split("test", checkpoint_tag=tag, checkpoint_step=step)
+                for spec in self.cfg.evaluation.extra_sets:
+                    self._evaluate_extra(tag, step, spec)
         finally:
             latest = load_checkpoint(self.out / "checkpoints/latest.pt", map_location="cpu")
             self.raw.load_state_dict(latest["model"])
@@ -758,12 +1012,15 @@ class Trainer:
             with torch.no_grad():
                 generated = generate(self.raw, prompts, self.cfg.protocol.name, self.tok, self.cfg.train.precision,
                                      filler_tokens=filler_length(self.cfg),
-                                     max_new_tokens=self.cfg.evaluation.max_new_tokens)
+                                     max_new_tokens=self.cfg.evaluation.max_new_tokens,
+                                     cot_margin=self.cfg.protocol.cot_margin)
             for row, gen in zip(chunk, generated):
                 item = {"correct": gen["pred"] == row.label and not gen["format_fail"],
                         "format_fail": gen["format_fail"], "label": row.label, "shape": row.meta.get("shape"),
                         "distance": row.meta.get("distance"), "filler_tokens": row.filler_tokens, "generation_limit_reached": gen["generation_limit_reached"]}
-                if self.cfg.protocol.name in {"dfs_state", "bfs_state"}:
+                item.update(cot_interrupted=gen.get('cot_interrupted', False),
+                            forced_stop=gen.get('forced_stop', False))
+                if self.cfg.evaluation.trace_diagnostics and self.cfg.protocol.name in {"dfs_state", "bfs_state"}:
                     reference = row.tokens[row.prompt_len:row.answer_index]
                     item["correct_prefix_tokens"] = prefix_length(gen["trace_tokens"], reference)
                     item["search_complete"] = (not gen["generation_limit_reached"]) and gen["trace_tokens"] == reference
@@ -788,7 +1045,8 @@ class Trainer:
                     # token traces are previewed separately, not copied en masse.
                     record = {"query_id": int(row.meta["index"]), "pred": gen["pred"],
                               **{k: v for k, v in item.items() if k in (
-                                  "correct", "format_fail", "label", "shape", "distance")}}
+                                  "correct", "format_fail", "label", "shape", "distance",
+                                  "cot_interrupted", "forced_stop")}}
                     with predictions.open("a") as handle:
                         handle.write(json.dumps(record) + "\n")
                 if self.persist and len(preview) < 4:

@@ -2,7 +2,7 @@
 
 从零训练 causal Transformer，在 DAG 上判断起点到目标是否可达。支持 `direct`、`path`、`dfs_state`、`bfs_state`、`dfs_nodes`、`bfs_nodes`；主指标只看最终 YES/NO，错误轨迹不否决正确答案。当前探索入口见 `docs/research/EXPLORATIONS_V1.md`；此前数据覆盖与一跳监督重训见 `docs/research/RETRAIN_V3.md`。
 
-新图 N=16/M=24/4×4；固定图 N=32/M=48/8×4。三协议独立训练。270-token 紧凑词表；完整 DFS，没有 ANS、模式、预算或 CUT token。旧 checkpoint 不兼容，首轮数据与输出使用独立的 first_round_v2 路径。
+旧实验默认保留 v2 的 270-token 词表及原节点 ID。规模实验按配置在节点之后追加 `<STOP>`，固定图另追加世界标识，使用独立的 v3_append 词表；旧 checkpoint 仍可按旧配置加载，新规模 run 不与旧 checkpoint 混续。过长 CoT 输出 `<STOP>` 后，用模型的 YES/NO logits 给出答案，并单独记录中断统计。
 
 2026-10-16起暂时撤下Filler。旧训练入口及默认数据准备保留Direct、Path、DFS；新增探索入口提供课程、WALK消融、负例随机路径、随机DFS、BFS及无重复节点序列。历史Filler配置、token兼容和训练结果保留；恢复历史四协议批次时显式传入原`--protocols direct path dfs_state filler`。
 
@@ -14,6 +14,16 @@ bash scripts/explore.sh --run-name explore_v1_s012 --gpus 0 1 2 3 4 5 6 7 --wait
 ```
 
 标准图默认60项，任务阶段50k步、知识阶段1k步；可用`--experiments`分批、`--shapes wide deep`比较图形状。完整参数和实验表见`docs/research/EXPLORATIONS_V1.md`。
+
+规模扩展入口（单种子，默认 GPU 1–7，不自动启动）：
+
+```bash
+bash scripts/scale.sh --dry-run
+bash scripts/scale.sh --prepare-only
+bash scripts/scale.sh --run-name scale_v1_s0 --wait --background
+```
+
+规模批次共 68 个作业（60 个主任务、6 个知识阶段、2 个迁移探针）。固定图主设置只测试已学世界；两个探针额外测试 WALK 已见、任务查询未见的世界。完整任务表、随机轨迹缓存与截断定义、review 修复和续跑命令见 [SCALE_REVIEW.md](docs/research/SCALE_REVIEW.md)。
 
 ## 安装与环境
 

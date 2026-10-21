@@ -65,7 +65,7 @@ def _steps(model, batch, optimizer, device, precision: str, n: int, n_task: int)
 
 
 def _time_mode(cfg: AppConfig, device: torch.device, mode: str, batch_size: int, length: int, warmup: int, steps: int) -> dict:
-    tok = Tokenizer(cfg.data.node_vocab)
+    tok = Tokenizer.from_config(cfg)
     model_cfg = cfg.model
     compile_enabled = mode == "optimized"
     attn = "sdpa" if mode == "optimized" else "math"
