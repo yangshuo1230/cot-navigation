@@ -13,6 +13,7 @@ from torch import nn
 
 from cot_navigation.models.attention import CausalSelfAttention, KVCache
 from cot_navigation.models.ffn import build_ffn
+from cot_navigation.models.record_attention import record_mask
 
 
 class Block(nn.Module):
@@ -24,7 +25,7 @@ class Block(nn.Module):
         self.ffn = ffn
         self.drop = nn.Dropout(dropout)
 
-    def forward(self, x, positions, cache=None, layer_idx=0, cache_mode=None, return_attn=False, capture=None):
+    def forward(self, x, positions, cache=None, layer_idx=0, cache_mode=None, return_attn=False, capture=None, record_keep=None):
         delta, weights = self.attn(
             self.norm1(x),
             positions,
@@ -32,6 +33,7 @@ class Block(nn.Module):
             layer_idx=layer_idx,
             cache_mode=cache_mode,
             return_attn=return_attn,
+            record_keep=record_keep,
         )
         x = x + self.drop(delta)
         x = x + self.drop(self.ffn(self.norm2(x)))
@@ -54,6 +56,8 @@ class TransformerLM(nn.Module):
         dropout: float = 0.0,
         rope_base: float = 10000.0,
         pad_id: int = 0,
+        swa_records: int = 0,
+        swa_backend: str = "flex",
     ):
         super().__init__()
         self.vocab = vocab
@@ -65,6 +69,8 @@ class TransformerLM(nn.Module):
         self.ffn_kind = ffn
         self.attn_impl = attn_impl
         self.pad_id = pad_id
+        self.swa_records = swa_records
+        self.swa_backend = swa_backend
         self.embed = nn.Embedding(vocab, d_model, padding_idx=pad_id)
         self.blocks = nn.ModuleList()
         shared = build_ffn(ffn, d_model, d_ff) if ffn == "shared_dense" else None
@@ -96,6 +102,25 @@ class TransformerLM(nn.Module):
     ) -> torch.Tensor | tuple[torch.Tensor, list]:
         if positions is None:
             positions = torch.arange(tokens.shape[1], device=tokens.device).unsqueeze(0).expand(tokens.shape[0], -1)
+        keep = None
+        if self.swa_records:
+            history = tokens
+            if cache is not None:
+                if getattr(cache, "record_tokens", None) is None:
+                    cache.record_tokens = torch.zeros(tokens.shape[0], self.max_seq_len, dtype=tokens.dtype, device=tokens.device)
+                rows = torch.arange(tokens.shape[0], device=tokens.device)[:, None]
+                cache.record_tokens[rows, positions] = tokens
+                history = cache.record_tokens if cache_mode == "decode" else tokens
+            # Torch 2.6's verified fused path uses AMP and aligned blocks.
+            # Arbitrary-length generation prefills, FP32 and decode use the
+            # equivalent SDPA/reference mask rather than unsupported kernels.
+            use_flex = (
+                self.swa_backend == "flex" and tokens.is_cuda
+                and torch.is_autocast_enabled() and tokens.shape[1] % 128 == 0
+                and cache_mode != "decode" and not return_attn
+                and self.attn_impl != "math"
+            )
+            keep = record_mask(history, positions, self.swa_records, use_flex=use_flex)
         x = self.embed(tokens)
         weights = []
         for index, block in enumerate(self.blocks):
@@ -107,6 +132,7 @@ class TransformerLM(nn.Module):
                 cache_mode=cache_mode,
                 return_attn=return_attn,
                 capture=capture,
+                record_keep=keep,
             )
             if return_attn:
                 weights.append(layer_w)
@@ -133,10 +159,15 @@ class TransformerLM(nn.Module):
             "heads": self.n_heads,
             "projection_flops_per_token": proj,
             "attn_impl": self.attn_impl,
+            "swa_records": self.swa_records,
+            "swa_backend": self.swa_backend,
         }
 
 
 def build_model(cfg, vocab: int, pad_id: int = 0) -> TransformerLM:
+    if cfg.architecture == "dual":
+        from .dual_attention import DualAttentionLM
+        return DualAttentionLM(cfg, vocab, pad_id)
     return TransformerLM(
         vocab=vocab,
         layers=cfg.layers,
@@ -149,4 +180,6 @@ def build_model(cfg, vocab: int, pad_id: int = 0) -> TransformerLM:
         dropout=cfg.dropout,
         rope_base=cfg.rope_base,
         pad_id=pad_id,
+        swa_records=cfg.swa_records,
+        swa_backend=cfg.swa_backend,
     )

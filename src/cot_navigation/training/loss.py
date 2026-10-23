@@ -6,7 +6,8 @@ its own prediction. Padding and non-target tokens have mask 0 and are excluded
 before the per-example mean, so a longer microbatch does not change an
 example's weight.
 
-Path/DFS task loss is ``answer CE + mean(trace CE)`` for that example.
+Path/DFS task loss is ``2*(answer CE + lambda*mean(trace CE))/(1+lambda)``.
+The default lambda=1 exactly retains the original per-example objective.
 Direct/filler task loss is the answer CE only. Walk loss is the mean CE of
 transition nodes. The logical-batch reduction divides by the number of task
 queries and the number of walks separately.
@@ -42,13 +43,17 @@ def combine_losses(
     n_task: int,
     n_walk: int,
     walk_weight=1.0,
+    trace_lambda: float = 1.0,
 ) -> dict[str, torch.Tensor]:
     nll = token_nll(logits, tokens)
     answer, has_answer = masked_mean(nll, answer_mask)
     trace, has_trace = masked_mean(nll, trace_mask)
     walk, has_walk = masked_mean(nll, walk_mask)
     zeros = torch.zeros_like(answer)
-    task = torch.where(has_answer, answer + torch.where(has_trace, trace, zeros), zeros)
+    # No-trace protocols keep their original answer objective. Scaling the
+    # coefficients to sum to two preserves the lambda=1 baseline exactly.
+    weighted = (2.0 / (1.0 + trace_lambda)) * (answer + trace_lambda * trace)
+    task = torch.where(has_answer, torch.where(has_trace, weighted, answer), zeros)
     walk_term = torch.where(has_walk, walk, zeros)
     total = None
     if n_task > 0:

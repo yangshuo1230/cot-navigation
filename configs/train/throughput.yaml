@@ -1,0 +1,15 @@
+# Overlay after the experiment config. Logical batch and objective unchanged.
+train:
+  max_tokens_per_microbatch: 65536
+  max_padding_fraction: 0.30
+  compile_loss: true
+  log_interval: 100
+  eval_interval: 5000
+  free_eval_interval: 10000
+  save_interval: 10000
+evaluation:
+  # Independent from teacher-forced batching. Input/cache guards retain all queries.
+  free_batch_size: 64
+  free_max_cache_mb: 8192
+  free_max_prefill_tokens: 65536
+  compile_generation: true

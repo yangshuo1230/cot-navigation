@@ -36,6 +36,10 @@ def visible_metrics(cfg: AppConfig) -> tuple[str, ...]:
         keys.append("walk_loss")
         if cfg.train.walk_loss_mode == "balanced":
             keys.extend(("task_loss", "weighted_walk_loss", "walk_loss_share", "walk_weight"))
+    if cfg.protocol.enable_mistake:
+        keys.extend(('correction/overall/detection_rate',
+                     'correction/overall/exact_repair_rate',
+                     'correction/overall/false_alarm_rate'))
     return tuple(keys)
 
 
@@ -49,6 +53,7 @@ ONLINE_DIAGNOSTICS = frozenset({
     "test/last/overall/answer_accuracy", "test/last/overall/balanced_accuracy",
     "free/overall/balanced_accuracy",
     "task_loss", "weighted_walk_loss", "walk_loss_share", "walk_weight", "curriculum_stage",
+    "mistake_batch_fraction", "free/mistake_markers/query_rate",
 })
 
 

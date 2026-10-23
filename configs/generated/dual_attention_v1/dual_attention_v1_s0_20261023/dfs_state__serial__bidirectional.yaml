@@ -1,0 +1,209 @@
+output_dir: /mnt/ningxuefei/yangshuo/cot-navigation/outputs/dual_attention_v1/launches/dual_attention_v1_s0_20261023/dfs_state/serial/bidirectional
+data:
+  knowledge: context_graph
+  n_nodes: 100
+  n_edges: 200
+  shapes:
+    main:
+      layers: 10
+      width: 10
+  splits:
+    train: 50000
+    val: 512
+    test: 512
+  root: data/hard_dag_v1/context_r10b10_n100_m200_train50000_s0
+  graph_family: multiscale_dag_v1
+  node_vocab: 256
+  data_seed: 0
+  graph_seeds:
+  - 0
+  max_attempts: 2000
+  workers: 4
+  chunk_size: 512
+  audit_fraction: 0.05
+  min_edge_coverage: 100
+  n_walks: 5000
+  walk_lengths:
+  - 1
+  - 2
+  - 3
+  - 4
+  query_ratios:
+  - 0.7
+  - 0.15
+  - 0.15
+  max_prepared_paths: 1000000
+  max_prepared_path_nodes: 20000000
+  graph_shape: main
+  graph_seed: 0
+  include_one_hop_queries: false
+  context_holdout_first: true
+model:
+  architecture: dual
+  attention_order: serial
+  graph_attention: bidirectional
+  graph_max_tokens: 868
+  layers: 6
+  heads: 2
+  d_model: 128
+  d_ff: 512
+  activation: gelu
+  position_encoding: rope
+  max_seq_len: 32768
+  tie_embeddings: true
+  dropout: 0.0
+  ffn: standard
+  attn_impl: sdpa
+  compile: true
+  compile_mode: default
+  rope_base: 10000.0
+  swa_records: 0
+  swa_backend: flex
+protocol:
+  name: dfs_state
+  filler_tokens: null
+  negative_random_path: false
+  random_search_order: true
+  cot_margin: 8
+  trajectory_variants: 4
+  enable_mistake: false
+  mistake_rate: 0.0
+  mistake_mask_errors: true
+  mistake_seed: 0
+  mistake_cache_root: data/mistake_v1
+  mistake_source: synthetic
+  natural_complex_share: 0.5
+train:
+  max_steps: 140000
+  effective_query_batch_size: 64
+  walk_batch_size: 16
+  lr: 0.001
+  min_lr: 0.0001
+  warmup_steps: 100
+  betas:
+  - 0.9
+  - 0.99
+  weight_decay: 0.01
+  grad_clip: 1.0
+  trace_loss_lambda: 1.0
+  precision: bf16
+  eval_interval: 5000
+  free_eval_interval: 10000
+  save_interval: 10000
+  log_interval: 100
+  microbatch_size: 0
+  bucket_multiple: 64
+  pin_memory: true
+  max_tokens_per_microbatch: 65536
+  max_padding_fraction: 0.3
+  compile_loss: true
+  persist_outputs: true
+  deterministic: false
+  stage: context
+  task_only: false
+  skip_knowledge_stage: false
+  exposure_seed: 0
+  keep_last: 1
+  eval_samples: 128
+  free_gen_samples: 64
+  model_seed: 0
+  fixed_query_pool: balanced
+  balance_query_labels: false
+  one_hop_fraction: 0.0
+  shuffle_context_edges: true
+  query_hops: all
+  curriculum_stage_steps: []
+  walk_loss_mode: fixed
+  walk_loss_weight: 1.0
+  walk_balance_decay: 0.98
+  scale_roots:
+  - data/hard_dag_v1/context_r4b4_n16_m32_train50000_s0
+  - data/hard_dag_v1/context_r4b6_n24_m48_train50000_s0
+  - data/hard_dag_v1/context_r4b8_n32_m64_train50000_s0
+  - data/hard_dag_v1/context_r6b6_n36_m72_train50000_s0
+  - data/hard_dag_v1/context_r8b8_n64_m128_train50000_s0
+  - data/hard_dag_v1/context_r10b10_n100_m200_train50000_s0
+  scale_weights: []
+  scale_stage_ends:
+  - 40000
+  - 70000
+  - 100000
+  - 140000
+  scale_stage_weights:
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.09999999999999999
+  - 0.09999999999999999
+  - 0.09999999999999999
+  - 0.7
+  - 0.0
+  - 0.0
+  - 0.075
+  - 0.075
+  - 0.075
+  - 0.075
+  - 0.7
+  - 0.0
+  - 0.06
+  - 0.06
+  - 0.06
+  - 0.06
+  - 0.06
+  - 0.7
+  scale_walk_weights: []
+  world_roots: []
+tracking:
+  mode: online
+  project: cot-graph-reasoning
+  entity: null
+  name: dual_attention_v1_s0_20261023/dfs_state/serial/bidirectional
+  group: dual_attention_v1_s0_20261023
+  tags:
+  - dual_attention_v1
+  - hard_dag_v1
+  - dfs_state
+  - serial
+  - bidirectional
+  notes: Two 64-dimensional branches; fixed graph+QUERY memory; causal CoT history;
+    matched parameters across eight cells; 140k shared curriculum.
+  variant: dual-serial-bidirectional
+  online_failure: error
+  upload_artifacts: false
+  resume: allow
+runtime:
+  device: cuda
+  cuda_device: 0
+  probe_kernels: false
+  fused_adamw: auto
+  smoke: false
+evaluation:
+  batch_size: 16
+  free_batch_size: 64
+  free_max_cache_mb: 8192
+  free_max_prefill_tokens: 65536
+  compile_generation: true
+  mistake_samples: 0
+  seed: 1729
+  test_samples: 256
+  max_new_tokens: 0
+  fixed_query_view: balanced
+  selection_metric: answer_accuracy
+  final_checkpoints:
+  - best
+  - last
+  extra_sets:
+  - n16=data/hard_dag_v1/context_r4b4_n16_m32_train50000_s0
+  - n24=data/hard_dag_v1/context_r4b6_n24_m48_train50000_s0
+  - n32=data/hard_dag_v1/context_r4b8_n32_m64_train50000_s0
+  - n36=data/hard_dag_v1/context_r6b6_n36_m72_train50000_s0
+  - n64=data/hard_dag_v1/context_r8b8_n64_m128_train50000_s0
+  - deep=data/hard_dag_v1/context_r20b5_n100_m200_s0
+  - wide=data/hard_dag_v1/context_r5b20_n100_m200_s0
+  - larger=data/hard_dag_v1/context_r12b12_n144_m288_s0
+  selection_min_step: 100000
+  save_trace_tokens: true
+  trace_diagnostics: false

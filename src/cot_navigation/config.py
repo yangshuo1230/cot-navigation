@@ -7,6 +7,7 @@ fail before training. Experiment numbers live in YAML, not algorithm branches.
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -42,6 +43,7 @@ class DataConfig:
     shapes: dict[str, ShapeSpec]
     splits: SplitsSpec
     root: str
+    graph_family: str = "layered"  # layered | multiscale_dag_v1
     node_vocab: int = 256
     data_seed: int = 0
     graph_seeds: tuple[int, ...] = (0, 1, 2)
@@ -66,6 +68,10 @@ class DataConfig:
 
 @dataclass
 class ModelConfig:
+    architecture: str = "standard"  # standard | dual
+    attention_order: str = "parallel"  # parallel | serial
+    graph_attention: str = "causal"  # causal | bidirectional (prefix only)
+    graph_max_tokens: int = 1024  # upper bound, including QUERY s t |
     layers: int = 6
     heads: int = 1
     d_model: int = 128
@@ -80,6 +86,8 @@ class ModelConfig:
     compile: bool = False
     compile_mode: str = "default"
     rope_base: float = 10000.0
+    swa_records: int = 0  # 0: full causal; otherwise completed records retained
+    swa_backend: str = "flex"  # flex (compiled GPU kernel) | sdpa (reference)
 
 
 @dataclass
@@ -93,6 +101,13 @@ class ProtocolConfig:
     # this many positions before max_seq_len, after <STOP> and YES/NO/EOS.
     cot_margin: int = 0
     trajectory_variants: int = 0  # offline randomized traces; 0 keeps legacy behavior
+    enable_mistake: bool = False  # append MISTAKE without changing existing IDs
+    mistake_rate: float = 0.0  # probability per training query exposure
+    mistake_mask_errors: bool = True
+    mistake_seed: int = 0
+    mistake_cache_root: str = "data/mistake_v1"
+    mistake_source: str = "synthetic"  # legacy single edits | observed model candidate fields
+    natural_complex_share: float = 0.5  # prefer observed multi-edit/multi-event episodes
 
 
 @dataclass
@@ -106,14 +121,20 @@ class TrainConfig:
     betas: tuple[float, float] = (0.9, 0.99)
     weight_decay: float = 0.01
     grad_clip: float = 1.0
+    trace_loss_lambda: float = 1.0  # normalized task loss: 2*(answer+lambda*trace)/(1+lambda)
     precision: str = "bf16"
     eval_interval: int = 1000
+    free_eval_interval: int = 0  # 0 follows eval_interval; independent expensive rollouts
     save_interval: int = 1000
     log_interval: int = 10
     microbatch_size: int = 0
     bucket_multiple: int = 64
     pin_memory: bool = True
-    max_tokens_per_microbatch: int = 16384
+    max_tokens_per_microbatch: int = 65536
+    # Bound extra padding from mixing different length buckets, not the
+    # unavoidable rounding of an individual row to bucket_multiple.
+    max_padding_fraction: float = 0.30
+    compile_loss: bool = True
     persist_outputs: bool = True
     deterministic: bool = False
     stage: str = "context"
@@ -170,6 +191,11 @@ class RuntimeConfig:
 @dataclass
 class EvaluationConfig:
     batch_size: int = 8
+    free_batch_size: int = 0  # 0 follows batch_size, independent of teacher forcing
+    free_max_cache_mb: int = 0  # optional bound on estimated K/V allocation
+    free_max_prefill_tokens: int = 0  # optional padded prompt-token batch limit
+    compile_generation: bool = False  # GPU opt-in; CPU retains reference eager decode
+    mistake_samples: int = 0  # held-out error-prefix diagnostics, separate from clean selection
     seed: int = 1729
     # 0 means the entire test split, independently of short training validation.
     test_samples: int = 0
@@ -182,6 +208,7 @@ class EvaluationConfig:
     # name=path entries. Context path is a dataset root; fixed path is a world dir.
     extra_sets: tuple[str, ...] = ()
     selection_min_step: int = 0  # free-gen val before this step cannot select best
+    save_trace_tokens: bool = False  # retain free rollouts for semantic search audits
     trace_diagnostics: bool = True  # field-level DFS/BFS comparison during free eval
 
 
@@ -225,6 +252,7 @@ class AppConfig:
                 raise ConfigError(
                     f"shape {name}: n_edges={self.data.n_edges} exceeds {candidates} candidate edges"
                 )
+        _require(self.data.graph_family in {"layered", "multiscale_dag_v1"}, "graph_family")
         n_shapes = len(self.data.shapes)
         for split_name, count in (
             ("train", self.data.splits.train),
@@ -243,6 +271,43 @@ class AppConfig:
         _require(not self.protocol.negative_random_path or self.protocol.name == "path", "negative_random_path requires path")
         _require(not self.protocol.random_search_order or self.protocol.name in {"dfs_state", "dfs_nodes", "bfs_state", "bfs_nodes"}, "random_search_order requires a search protocol")
         _require(0 <= self.protocol.cot_margin < self.model.max_seq_len, "cot_margin")
+        _require(math.isfinite(self.protocol.mistake_rate) and 0 <= self.protocol.mistake_rate <= 1,
+                 "mistake_rate must be in [0,1]")
+        _require(self.protocol.enable_mistake or self.protocol.mistake_rate == 0,
+                 "mistake_rate requires enable_mistake")
+        _require(self.protocol.mistake_source in {'synthetic', 'natural'}, 'mistake_source')
+        _require(0 <= self.protocol.natural_complex_share <= 1, 'natural_complex_share')
+        _require(self.protocol.mistake_source != 'natural' or
+                 (self.protocol.enable_mistake and not self.protocol.mistake_mask_errors),
+                 'natural candidate study uses MISTAKE with full trace supervision')
+        if self.protocol.enable_mistake:
+            _require(self.data.knowledge == "context_graph" and self.protocol.name in {"dfs_state", "bfs_state"}
+                     and self.protocol.trajectory_variants > 0 and bool(self.train.scale_roots),
+                     "MISTAKE study requires context state traces with offline scale variants")
+            _require(self.protocol.cot_margin >= 1, "MISTAKE traces require boundary-aware truncation")
+        _require(self.evaluation.mistake_samples >= 0, "mistake_samples")
+        _require(self.evaluation.free_batch_size >= 0 and self.evaluation.free_max_cache_mb >= 0
+                 and self.evaluation.free_max_prefill_tokens >= 0, "free generation batch limits")
+        _require(not self.evaluation.compile_generation or not self.model.swa_records,
+                 "compiled generation currently requires full attention, not record SWA")
+        _require(not self.evaluation.mistake_samples or self.protocol.enable_mistake,
+                 "mistake diagnostics require enable_mistake")
+        _require(math.isfinite(self.train.trace_loss_lambda) and self.train.trace_loss_lambda > 0, "trace_loss_lambda must be finite and positive")
+        _require(self.model.swa_records >= 0, "swa_records must be nonnegative")
+        _require(self.model.swa_backend in {"flex", "sdpa"}, "swa_backend")
+        _require(not self.model.swa_records or self.protocol.name in {"dfs_state", "bfs_state"}, "record SWA requires DFS/BFS state protocol")
+        _require(not self.model.swa_records or not self.model.compile, "record SWA compiles its attention kernel separately; set model.compile=false")
+        _require(self.model.architecture in {"standard", "dual"}, "model.architecture")
+        _require(self.model.attention_order in {"parallel", "serial"}, "attention_order")
+        _require(self.model.graph_attention in {"causal", "bidirectional"}, "graph_attention")
+        if self.model.architecture == "dual":
+            _require(self.data.knowledge == "context_graph", "dual requires in-context graphs")
+            _require(self.model.heads == 2 and self.model.d_model % 4 == 0,
+                     "dual requires two even half-width branches")
+            _require(self.model.ffn == "standard" and self.model.dropout == 0
+                     and self.model.swa_records == 0 and self.model.attn_impl == "sdpa",
+                     "dual currently supports standard FFN, zero dropout, SDPA and full history")
+            _require(self.model.graph_max_tokens >= max_prompt_tokens(self.data), "graph_max_tokens")
         _require(self.model.ffn in {"standard", "shared_dense"}, "model.ffn")
         if self.model.ffn not in {"standard", "shared_dense"}:
             raise ConfigError("unsupported ffn")
@@ -326,6 +391,9 @@ class AppConfig:
                          and all(item >= 0 for item in self.train.scale_weights)
                          and sum(self.train.scale_weights) > 0, "scale_weights")
         _require(self.train.microbatch_size >= 0 and self.train.max_tokens_per_microbatch >= 0, "microbatch limits")
+        _require(self.train.free_eval_interval >= 0, "free_eval_interval must be nonnegative")
+        _require(math.isfinite(self.train.max_padding_fraction) and 0 <= self.train.max_padding_fraction <= 1,
+                 "max_padding_fraction must be in [0,1]")
         _require(self.evaluation.batch_size >= 1 and self.evaluation.test_samples >= 0
                  and self.evaluation.max_new_tokens >= 0, "evaluation limits")
         if self.train.stage == "A" or (self.train.stage == "B" and self.train.walk_loss_mode != "none"):
@@ -369,7 +437,7 @@ def dfs_body_bound(data: DataConfig) -> int:
     at most N-1 PUSH arguments. No example is filtered by trace length.
     """
     n = data.n_nodes
-    w = max(s.width for s in data.shapes.values())
+    w = max(s.width for s in data.shapes.values()) if data.graph_family == "layered" else n - 1
     return n*n + n*(2*n-1) + (data.n_edges*(w+1)+1)//2 + 5*(2*n-1) + n-1
 
 
@@ -382,7 +450,7 @@ def _worst_sequence_len(cfg: AppConfig) -> int:
     elif cfg.protocol.name == "filler":
         body = filler_length(cfg)
     elif cfg.protocol.name == "path":
-        body = max(s.layers for s in cfg.data.shapes.values())
+        body = max(s.layers for s in cfg.data.shapes.values()) if cfg.data.graph_family == "layered" else cfg.data.n_nodes
     elif cfg.protocol.name in {"dfs_nodes", "bfs_nodes"}:
         body = cfg.data.n_nodes
     elif cfg.protocol.name == "bfs_state":
@@ -547,6 +615,8 @@ def _data_from_dict(raw: Mapping[str, Any]) -> DataConfig:
         "splits": splits,
         "root": str(_need(raw, "root", "data")),
     }
+    if "graph_family" in raw:
+        kwargs["graph_family"] = str(raw["graph_family"])
     if "graph_seeds" in raw:
         kwargs["graph_seeds"] = _as_int_tuple(raw["graph_seeds"], "graph_seeds")
     if "walk_lengths" in raw:

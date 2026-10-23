@@ -77,6 +77,8 @@ def cached_logits(model: TransformerLM, tokens: torch.Tensor, lengths: torch.Ten
 def _decode_step(model, cache, token_ids: torch.Tensor, precision: str, active=None) -> torch.Tensor:
     device = token_ids.device
     positions = cache.lengths.clamp(max=cache.max_len - 1).unsqueeze(1)
+    if cache.valid_length is not None:
+        cache.valid_length = min(cache.valid_length + 1, cache.max_len)
     with _autocast(device, precision):
         logits = model(token_ids, positions=positions, cache=cache, cache_mode="decode")
     cache.lengths += 1 if active is None else active.to(cache.lengths.dtype)
@@ -86,7 +88,8 @@ def _decode_step(model, cache, token_ids: torch.Tensor, precision: str, active=N
 @torch.no_grad()
 def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
              tok: Tokenizer, precision: str = "fp32", *, filler_tokens: int = 0,
-             max_new_tokens: int = 0, cot_margin: int = 0) -> list[dict]:
+             max_new_tokens: int = 0, cot_margin: int = 0,
+             crop_cache: bool = True, compact_finished: bool = True) -> list[dict]:
     """Greedy free generation; the first YES/NO terminates a response.
 
     By default exhausted context and EOS before an answer are failures. With
@@ -94,6 +97,9 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
     for state traces); the next answer is the model argmax over YES/NO, never
     an oracle label. Trace errors do not veto a correct answer. Direct/Filler
     sample exactly one answer token.
+
+    crop_cache and compact_finished skip unused keys and completed rows;
+    disabling both retains the reference decode for numerical comparisons.
     """
     if not prompts:
         return []
@@ -116,6 +122,8 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
             positions = torch.arange(tokens.shape[1], device=device).expand(len(prompts), -1)
             logits = model(tokens, positions=positions, cache=cache, cache_mode="prefill")
             cache.lengths.copy_(lengths)
+            if crop_cache:
+                cache.valid_length = tokens.shape[1]
     next_logits = _gather_row(logits, lengths - 1)
     caps = [min(model.max_seq_len - len(p), max_new_tokens or model.max_seq_len) for p in inputs]
     if protocol in {"direct", "filler"}:
@@ -134,19 +142,20 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
     if cot_margin and stop is None:
         raise ValueError('CoT interruption requires the opt-in STOP vocabulary')
     eos = tok.id("<EOS>")
+    live_rows = list(range(len(prompts)))
     while any(active):
         # One transfer per decode step, not per row.
         picked = next_logits.argmax(dim=-1).tolist()
         answer_picks = (next_logits[:, [tok.no, tok.yes]].argmax(-1).tolist()
                         if any(pending_answer) else None)
-        feed = [tok.pad] * len(prompts)
-        for i in range(len(prompts)):
+        feed = [tok.pad] * len(live_rows)
+        for local, i in enumerate(live_rows):
             if not active[i]:
                 continue
-            pred = picked[i]
+            pred = picked[local]
             if pending_answer[i]:
                 # Protocol-constrained answer, using model logits, never gold.
-                pred = (tok.no, tok.yes)[answer_picks[i]]
+                pred = (tok.no, tok.yes)[answer_picks[local]]
             elif (cot_margin and protocol not in {'direct', 'filler'}
                   and len(inputs[i]) + counts[i] >= model.max_seq_len - cot_margin - 3
                   and pred not in (tok.yes, tok.no)):
@@ -155,7 +164,7 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
                     generated[i] = generated[i][:keep]
                     traces[i] = traces[i][:keep]
                     counts[i] = keep
-                    cache.lengths[i] = len(inputs[i]) + keep
+                    cache.lengths[local] = len(inputs[i]) + keep
                 pred = stop
                 forced_stop[i] = True
             if cot_margin and pred == stop:
@@ -180,10 +189,22 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
                     limits[i] = True
                     active[i] = False
                 else:
-                    feed[i] = pred
+                    feed[local] = pred
         if any(active):
+            if compact_finished:
+                keep_rows = [j for j, i in enumerate(live_rows) if active[i]]
+                if len(keep_rows) != len(live_rows):
+                    index = torch.tensor(keep_rows, dtype=torch.long, device=device)
+                    cache.select_batch(index)
+                    feed = [feed[j] for j in keep_rows]
+                    live_rows = [live_rows[j] for j in keep_rows]
+            if crop_cache:
+                # counts includes the newly selected token, not yet cached.
+                # Use CPU lengths to avoid a GPU synchronization in each layer.
+                cache.valid_length = max(len(inputs[i]) + counts[i] - 1
+                                         for i in live_rows if active[i])
             step_tokens = torch.tensor(feed, dtype=torch.long, device=device).unsqueeze(1)
-            mask = torch.tensor(active, dtype=torch.bool, device=device)
+            mask = torch.tensor([active[i] for i in live_rows], dtype=torch.bool, device=device)
             next_logits = _decode_step(model, cache, step_tokens, precision, mask)
     results = []
     for i, prompt in enumerate(prompts):

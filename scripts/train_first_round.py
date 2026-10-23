@@ -149,7 +149,8 @@ def check_resume_plan(previous: dict, current: dict):
         # configs; normalize only these known additions before comparison.
         additions = {
             "protocol": {"negative_random_path": False, "random_search_order": False},
-            "train": {"shuffle_context_edges": False, "query_hops": "all",
+            "model": {"swa_records": 0, "swa_backend": "flex"},
+            "train": {"trace_loss_lambda": 1.0, "shuffle_context_edges": False, "query_hops": "all",
                       "curriculum_stage_steps": [], "walk_loss_mode": "fixed",
                       "walk_loss_weight": 1.0, "walk_balance_decay": 0.98,
                       "task_only": False, "skip_knowledge_stage": False},

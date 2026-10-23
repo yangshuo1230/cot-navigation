@@ -1,0 +1,43 @@
+{
+  "formula": "2*(answer+lambda*mean_trace)/(1+lambda)",
+  "prompt_visibility": "always causal-visible",
+  "window_unit": "semicolon-completed state record",
+  "current_record_counts_toward_window": false,
+  "jobs": [
+    {
+      "name": "context/dfs_state/full_l1",
+      "original_config": "/mnt/ningxuefei/yangshuo/cot-navigation/outputs/scale_v1/launches/scale_v1_s0/context/curriculum/dfs_state/resolved_config.yaml",
+      "config": "/mnt/ningxuefei/yangshuo/cot-navigation/configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__full_l1.yaml",
+      "lambda": 1,
+      "swa_records": 0
+    },
+    {
+      "name": "context/dfs_state/full_l4",
+      "original_config": "/mnt/ningxuefei/yangshuo/cot-navigation/outputs/scale_v1/launches/scale_v1_s0/context/curriculum/dfs_state/resolved_config.yaml",
+      "config": "/mnt/ningxuefei/yangshuo/cot-navigation/configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__full_l4.yaml",
+      "lambda": 4,
+      "swa_records": 0
+    },
+    {
+      "name": "context/dfs_state/full_l16",
+      "original_config": "/mnt/ningxuefei/yangshuo/cot-navigation/outputs/scale_v1/launches/scale_v1_s0/context/curriculum/dfs_state/resolved_config.yaml",
+      "config": "/mnt/ningxuefei/yangshuo/cot-navigation/configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__full_l16.yaml",
+      "lambda": 16,
+      "swa_records": 0
+    },
+    {
+      "name": "context/dfs_state/swa1_l1",
+      "original_config": "/mnt/ningxuefei/yangshuo/cot-navigation/outputs/scale_v1/launches/scale_v1_s0/context/curriculum/dfs_state/resolved_config.yaml",
+      "config": "/mnt/ningxuefei/yangshuo/cot-navigation/configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__swa1_l1.yaml",
+      "lambda": 1,
+      "swa_records": 1
+    },
+    {
+      "name": "context/dfs_state/swa2_l1",
+      "original_config": "/mnt/ningxuefei/yangshuo/cot-navigation/outputs/scale_v1/launches/scale_v1_s0/context/curriculum/dfs_state/resolved_config.yaml",
+      "config": "/mnt/ningxuefei/yangshuo/cot-navigation/configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__swa2_l1.yaml",
+      "lambda": 1,
+      "swa_records": 2
+    }
+  ]
+}

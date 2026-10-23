@@ -61,6 +61,7 @@ class ScaleMember:
     n_walks: int
     prepared_tasks: object = None
     prepared_walks: object = None
+    correction_catalog: object = None
 
 
 def _optimizer(model, cfg, device: torch.device):
@@ -100,6 +101,10 @@ def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
         "vocab_hash": tok.hash(),
         "vocab_size": len(tok),
         "manifest_hash": manifest_hash,
+        "architecture": cfg.model.architecture,
+        "attention_order": cfg.model.attention_order,
+        "graph_attention": cfg.model.graph_attention,
+        "graph_max_tokens": cfg.model.graph_max_tokens,
         "layers": cfg.model.layers,
         "heads": cfg.model.heads,
         "d_model": cfg.model.d_model,
@@ -123,6 +128,9 @@ def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
         "graph_seed": cfg.data.graph_seed,
         "max_steps": cfg.train.max_steps,
         "rope_base": cfg.model.rope_base,
+        "swa_records": cfg.model.swa_records,
+        "swa_backend": cfg.model.swa_backend,
+        "trace_loss_lambda": cfg.train.trace_loss_lambda,
         "dropout": cfg.model.dropout,
         "activation": cfg.model.activation,
         "position_encoding": cfg.model.position_encoding,
@@ -152,12 +160,30 @@ def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
         "scale_walk_weights": list(cfg.train.scale_walk_weights),
         "world_roots": list(cfg.train.world_roots),
         "trajectory_variants": cfg.protocol.trajectory_variants,
+        "enable_mistake": cfg.protocol.enable_mistake,
+        "mistake_rate": cfg.protocol.mistake_rate,
+        "mistake_mask_errors": cfg.protocol.mistake_mask_errors,
+        "mistake_seed": cfg.protocol.mistake_seed,
+        "mistake_cache_root": cfg.protocol.mistake_cache_root,
+        "mistake_version": 1,
+        "mistake_samples": cfg.evaluation.mistake_samples,
+        "mistake_source": cfg.protocol.mistake_source,
+        "natural_complex_share": cfg.protocol.natural_complex_share,
         "selection_min_step": cfg.evaluation.selection_min_step,
         "extra_sets": list(cfg.evaluation.extra_sets),
     }
 
 
 def _check_resume(saved: dict, current: dict) -> list[str]:
+    for key, default in {"architecture": "standard", "attention_order": "parallel",
+                         "graph_attention": "causal", "graph_max_tokens": 1024}.items():
+        saved.setdefault(key, default)
+    for key, default in {"enable_mistake": False, "mistake_rate": 0.0,
+                         "mistake_mask_errors": True, "mistake_seed": 0,
+                         "mistake_cache_root": "data/mistake_v1", "mistake_version": 1,
+                         "mistake_samples": 0, "mistake_source": "synthetic",
+                         "natural_complex_share": 0.5}.items():
+        saved.setdefault(key, default)
     # Old runs remain resumable only with their original sampling/eval defaults.
     for key, default in {"fixed_query_pool": "balanced", "balance_query_labels": False,
                          "one_hop_fraction": 0.0, "selection_metric": "answer_accuracy",
@@ -169,7 +195,7 @@ def _check_resume(saved: dict, current: dict) -> list[str]:
                          "trace_diagnostics": True, "scale_roots": [], "scale_weights": [],
                          "scale_stage_ends": [], "scale_stage_weights": [],
                          "scale_walk_weights": [], "world_roots": [], "trajectory_variants": 0,
-                         "selection_min_step": 0, "extra_sets": [], "task_only": False, "skip_knowledge_stage": False}.items():
+                         "selection_min_step": 0, "extra_sets": [], "task_only": False, "skip_knowledge_stage": False, "swa_records": 0, "swa_backend": "flex", "trace_loss_lambda": 1.0}.items():
         saved.setdefault(key, default)
     if saved.get("checkpoint_version") != current["checkpoint_version"]:
         raise TrainError("legacy checkpoint is incompatible with this data/path sampling version; start a new run")
@@ -186,22 +212,44 @@ def _check_resume(saved: dict, current: dict) -> list[str]:
     return allowed
 
 
-def _chunk(rows: list, micro: int, max_tokens: int = 0, multiple: int = 1) -> list[list]:
+def _chunk(rows: list, micro: int, max_tokens: int = 0, multiple: int = 1,
+           max_padding_fraction: float = 1.0) -> list[list]:
     if not rows:
         return []
     size = len(rows) if micro <= 0 else micro
-    chunks, current = [], []
+    chunks, current, padded_sum = [], [], 0
     # Reorder only inside this optimizer update. Logical query/walk exposure
     # and their separately normalized losses remain unchanged.
     for row in sorted(rows, key=lambda r: len(r.tokens)):
         padded = ((len(row.tokens) + multiple - 1) // multiple) * multiple
-        if current and (len(current) >= size or (max_tokens and padded * (len(current) + 1) > max_tokens)):
+        proposed = padded * (len(current) + 1)
+        extra_padding = (proposed - padded_sum - padded) / proposed
+        if current and (len(current) >= size or (max_tokens and proposed > max_tokens)
+                        or extra_padding > max_padding_fraction):
             chunks.append(current)
             current = []
+            padded_sum = 0
         current.append(row)
+        padded_sum += padded
     if current:
         chunks.append(current)
     return chunks
+
+
+def _generation_chunks(rows, batch_size: int, max_prefill_tokens: int = 0,
+                       filler_tokens: int = 0):
+    """Batch in original order using INPUT lengths only, never gold CoT lengths."""
+    current, width = [], 0
+    for row in rows:
+        proposed_width = max(width, row.prompt_len + filler_tokens)
+        if current and (len(current) >= batch_size or
+                        (max_prefill_tokens and proposed_width * (len(current) + 1) > max_prefill_tokens)):
+            yield current
+            current, width = [], 0
+        current.append(row)
+        width = max(width, row.prompt_len + filler_tokens)
+    if current:
+        yield current
 
 
 class Trainer:
@@ -259,6 +307,8 @@ class Trainer:
         self.tokens_seen = 0
         self.loss_balance_ema = None
         self._init_samplers()
+        if cfg.protocol.enable_mistake:
+            self.augmentation_rngs['mistake'] = np.random.default_rng(cfg.protocol.mistake_seed + 739)
         if init_from and resume:
             raise TrainError("stage init-from and resume are different operations; pass only one")
         if init_from:
@@ -275,9 +325,20 @@ class Trainer:
                 raise TrainError("torch.compile training path is implemented for CUDA")
             self.model = torch.compile(self.raw, mode=cfg.model.compile_mode,
                                        **({'dynamic': True} if cfg.protocol.trajectory_variants else {}))
+        # Fuse vocabulary NLL and the unchanged per-example masked reductions.
+        # CPU and ephemeral smoke checks retain the eager reference path.
+        self.loss_fn = combine_losses
+        if cfg.train.compile_loss and self.device.type == "cuda" and not cfg.runtime.smoke:
+            self.loss_fn = torch.compile(combine_losses, dynamic=True, fullgraph=True)
         env = probe_environment(probe_kernels=cfg.runtime.probe_kernels and self.device.type == "cuda")
         env["optimizer"] = self.opt_info
         env["parameters"] = self.raw.report()
+        env["training_performance"] = {
+            "max_tokens_per_microbatch": cfg.train.max_tokens_per_microbatch,
+            "max_padding_fraction": cfg.train.max_padding_fraction,
+            "compile_loss": self.loss_fn is not combine_losses,
+            "logical_query_batch": cfg.train.effective_query_batch_size,
+        }
         if self.persist:
             (self.out / "env.json").write_text(json.dumps(env, indent=2, default=str) + "\n")
         self.tracker = Tracker(cfg, self.run_id, self.parent_run_id, env, resume=resume is not None)
@@ -358,6 +419,7 @@ class Trainer:
         self.world = member.world
         self.prepared_tasks = member.prepared_tasks
         self.prepared_walks = member.prepared_walks
+        self.correction_catalog = member.correction_catalog
 
     def _scale_weights(self):
         ends = self.cfg.train.scale_stage_ends
@@ -501,6 +563,14 @@ class Trainer:
                                 if member.world is not None and cfg.protocol.name == "path" else 1)
                 for path_index in range(variants):
                     self._render_task(int(index), path_index=path_index)
+        if cfg.protocol.enable_mistake:
+            if cfg.protocol.mistake_source == 'natural':
+                from cot_navigation.data.natural_mistakes import NaturalCorrectionPool
+                member.correction_catalog = NaturalCorrectionPool(source, cfg, self.tok)
+            else:
+                from cot_navigation.data.mistakes import CorrectionCatalog
+                member.correction_catalog = CorrectionCatalog(source, member.prepared_tasks, cfg, self.tok)
+            self.correction_catalog = member.correction_catalog
         if member.world is not None and (cfg.train.stage == "A" or cfg.train.walk_loss_mode != "none"):
             try:
                 member.prepared_walks = PreparedRows(source, "walk", self.tok)
@@ -519,11 +589,18 @@ class Trainer:
             (self.out / "init_from.json").write_text(json.dumps(note, indent=2) + "\n")
 
     def _compatible_model(self, blob: dict) -> None:
+        for key, default in {"architecture": "standard", "attention_order": "parallel",
+                             "graph_attention": "causal", "graph_max_tokens": 1024}.items():
+            if blob["arch"].get(key, default) != self.snapshot[key]:
+                raise TrainError(f"checkpoint mismatch on {key}")
         keys = ("checkpoint_version", "layers", "heads", "d_model", "d_ff", "ffn", "max_seq_len", "vocab_hash",
                 "rope_base", "dropout", "activation", "position_encoding", "tie_embeddings", "knowledge")
         for key in keys:
             if blob["arch"].get(key) != self.snapshot[key]:
                 raise TrainError(f"checkpoint mismatch on {key}")
+
+        if blob["arch"].get("stage") != "A" and blob["arch"].get("swa_records", 0) != self.cfg.model.swa_records:
+            raise TrainError("checkpoint record-attention window mismatch")
 
     def _load_initial_payload(self, blob: dict, source: str) -> None:
         self._compatible_model(blob)
@@ -600,11 +677,20 @@ class Trainer:
             if self.completed % cfg.train.log_interval == 0 or self.completed == cfg.train.max_steps:
                 self.tracker.log(self.completed, metrics)
             last_metrics = metrics
+            # Commit training state before fallible/long-running validation.
+            # Refresh it below after validation to retain the updated best score.
+            save_due = bool(cfg.train.save_interval and self.completed % cfg.train.save_interval == 0)
+            if save_due:
+                self._save()
             if cfg.train.eval_interval and self.completed % cfg.train.eval_interval == 0:
                 self._evaluate(kind="teacher_forced")
-                if cfg.train.free_gen_samples > 0 and cfg.train.stage != "A":
-                    self._evaluate(kind="free")
-            if cfg.train.save_interval and self.completed % cfg.train.save_interval == 0:
+            free_interval = cfg.train.free_eval_interval or cfg.train.eval_interval
+            if (free_interval and self.completed % free_interval == 0
+                    and cfg.train.free_gen_samples > 0 and cfg.train.stage != "A"):
+                self._evaluate(kind="free")
+            if save_due and ((cfg.train.eval_interval and self.completed % cfg.train.eval_interval == 0)
+                             or (free_interval and self.completed % free_interval == 0
+                                 and cfg.train.free_gen_samples > 0 and cfg.train.stage != "A")):
                 self._save()
         self._save()
         if self.persist and cfg.train.stage != "A" and cfg.evaluation.final_checkpoints:
@@ -625,6 +711,22 @@ class Trainer:
         if self.cfg.protocol.trajectory_variants:
             path_index = int(self.augmentation_rngs['trajectory'].integers(self.prepared_tasks.variants(index)))
             row = self._render_task(index, path_index=path_index)
+            if self.cfg.protocol.enable_mistake:
+                rng = self.augmentation_rngs['mistake']
+                # Always draw both values: masks and rates preserve paired
+                # query, trajectory, edge and error-field exposure streams.
+                inject, field = float(rng.random()), int(rng.integers(2))
+                if inject < self.cfg.protocol.mistake_rate:
+                    if self.cfg.protocol.mistake_source == 'natural':
+                        # Direct observed episodes, preserving active scale and
+                        # label. No transfer of invented edit rules to a new graph.
+                        row = self.correction_catalog.sample(row.label, rng,
+                                  self.cfg.protocol.natural_complex_share)
+                    else:
+                        from cot_navigation.data.mistakes import apply_plan
+                        row = apply_plan(row, self.correction_catalog.plan(index, path_index, field),
+                                         self.tok, self.cfg)
+                    self._check_length(row)
             if self.cfg.train.shuffle_context_edges and self.store is not None:
                 edges = np.asarray(row.tokens[:row.prompt_len - 4]).reshape(-1, 3)
                 prompt = edges[self.augmentation_rngs['edges'].permutation(len(edges))].ravel().tolist() + row.tokens[row.prompt_len - 4:row.prompt_len]
@@ -754,8 +856,10 @@ class Trainer:
                     global_walks = local
                 walk_rows = [self._render_walk(i) for i in global_walks]
             n_walk = len(walk_rows)
-        task_chunks = _chunk(task_rows, cfg.train.microbatch_size, cfg.train.max_tokens_per_microbatch, cfg.train.bucket_multiple)
-        walk_chunks = _chunk(walk_rows, cfg.train.microbatch_size, cfg.train.max_tokens_per_microbatch, cfg.train.bucket_multiple)
+        task_chunks = _chunk(task_rows, cfg.train.microbatch_size, cfg.train.max_tokens_per_microbatch,
+                             cfg.train.bucket_multiple, cfg.train.max_padding_fraction)
+        walk_chunks = _chunk(walk_rows, cfg.train.microbatch_size, cfg.train.max_tokens_per_microbatch,
+                             cfg.train.bucket_multiple, cfg.train.max_padding_fraction)
         data_s = time.perf_counter() - data_t0
         self.opt.zero_grad(set_to_none=True)
         lr = self.schedule.set_lr()
@@ -778,13 +882,15 @@ class Trainer:
             real = int(arrays["lengths"].sum())
             real_tokens += real
             pad_tokens += int(arrays["tokens"].size - real)
-            batch = {k: torch.from_numpy(v) for k, v in arrays.items()}
+            # Lengths/labels/answer indices are CPU metadata, not model inputs.
+            batch = {k: torch.from_numpy(arrays[k])
+                     for k in ("tokens", "answer_mask", "trace_mask", "walk_mask")}
             if self.device.type == "cuda" and cfg.train.pin_memory:
                 batch = {k: v.pin_memory() for k, v in batch.items()}
             batch = {k: v.to(self.device, non_blocking=self.device.type == "cuda") for k, v in batch.items()}
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16, enabled=cfg.train.precision == "bf16"):
                 logits = self.model(batch["tokens"])
-            parts = combine_losses(
+            parts = self.loss_fn(
                 logits,
                 batch["tokens"],
                 batch["answer_mask"],
@@ -793,10 +899,11 @@ class Trainer:
                 n_task=n_task,
                 n_walk=n_walk,
                 walk_weight=walk_weight,
+                trace_lambda=cfg.train.trace_loss_lambda,
             )
             parts["total_loss"].backward()
             if balancing:
-                task_value += (parts["answer"].detach().sum() + parts["trace"].detach().sum()) / max(n_task, 1)
+                task_value += (2.0 / (1.0 + cfg.train.trace_loss_lambda)) * (parts["answer"].detach().sum() + cfg.train.trace_loss_lambda * parts["trace"].detach().sum()) / max(n_task, 1)
                 walk_value += parts["walk"].detach().sum() / max(n_walk, 1)
             if collect_metrics:
                 saved = {k: parts[k].detach() for k in ("answer", "trace", "walk", "has_answer", "has_trace", "has_walk")}
@@ -821,9 +928,11 @@ class Trainer:
         if not collect_metrics:
             return {"lr": lr}
         metrics = _reduce_logged(parts_list, n_task, n_walk)
-        metrics["total_loss"] = float(sum(item["backward_total"] for item in parts_list))
         if n_task:
-            metrics["task_loss"] = metrics["answer_loss"] + metrics.get("trace_loss", 0.0)
+            metrics["task_loss"] = (2.0 / (1.0 + cfg.train.trace_loss_lambda)) * (metrics["answer_loss"] + cfg.train.trace_loss_lambda * metrics["trace_loss"]) if "trace_loss" in metrics else metrics["answer_loss"]
+            metrics["trace_loss_lambda"] = cfg.train.trace_loss_lambda
+            metrics["weighted_answer_loss"] = metrics["answer_loss"] * (2.0 / (1.0 + cfg.train.trace_loss_lambda)) if "trace_loss" in metrics else metrics["answer_loss"]
+            metrics["weighted_trace_loss"] = metrics.get("trace_loss", 0.0) * (2.0 * cfg.train.trace_loss_lambda / (1.0 + cfg.train.trace_loss_lambda))
             if self.scale_members:
                 distances = np.asarray([row.meta.get("distance", -1) for row in task_rows])
                 metrics["scale_stage"] = int(np.searchsorted(self.cfg.train.scale_stage_ends, self.completed, side="right")) + 1 if self.cfg.train.scale_stage_ends else 1
@@ -853,6 +962,8 @@ class Trainer:
                 "microbatches": len(task_chunks) + len(walk_chunks),
             }
         )
+        if cfg.protocol.enable_mistake and n_task:
+            metrics['mistake_batch_fraction'] = sum(bool(row.meta.get('mistake')) for row in task_rows)/n_task
         if n_task:
             metrics["queries_seen"] = self.queries_seen
         if n_walk:
@@ -860,11 +971,17 @@ class Trainer:
         metrics["tokens_seen"] = self.tokens_seen
         if self.device.type == "cuda":
             metrics["gpu_mem_mb"] = torch.cuda.max_memory_allocated(self.device) / (1024 * 1024)
+            metrics["gpu_reserved_mb"] = torch.cuda.max_memory_reserved(self.device) / (1024 * 1024)
+        # Include rendering, collation, H2D, and scalar logging reductions.
+        # step_time alone historically omitted rendering and logging overhead.
+        metrics["update_time"] = time.perf_counter() - data_t0
+        metrics["end_to_end_tokens_per_s"] = real_tokens / max(metrics["update_time"], 1e-9)
         return metrics
 
     def _evaluate(self, kind: str) -> None:
         if self.val_ids.size == 0 or self.cfg.train.stage == "A":
             return
+        evaluation_t0 = time.perf_counter()
         if self.scale_members:
             self._activate(self.scale_members[int(np.argmax(self._scale_weights()))])
         self.raw.eval()
@@ -882,7 +999,10 @@ class Trainer:
             eval_dir.mkdir(exist_ok=True)
             (eval_dir / f"{kind}_{self.completed:08d}.json").write_text(json.dumps(record, indent=2) + "\n")
         flat = {f"{kind}/{key}": value for key, value in _flatten_numbers(packed).items()}
+        flat[f"{kind}/wall_time"] = time.perf_counter() - evaluation_t0
         self.tracker.log(self.completed, flat)
+        if kind == 'free' and self.cfg.evaluation.mistake_samples:
+            self._evaluate_mistakes('val')
         # Gold traces can disclose the answer. Only free-rollout final answers
         # select the main best checkpoint; teacher forcing is diagnostic.
         score = packed["overall"].get(self.cfg.evaluation.selection_metric)
@@ -917,7 +1037,8 @@ class Trainer:
         report = (self._free(rows, record_name=f"{split}_{checkpoint_tag}") if checkpoint_tag
                   else self._free(rows))
         report["unique_queries"] = len(ids)
-        report["evaluation_batch_size"] = self.cfg.evaluation.batch_size
+        report["evaluation_batch_size"] = self._free_batch_size()
+        report["teacher_forced_batch_size"] = self.cfg.evaluation.batch_size
         report["query_view"] = query_view or self.cfg.evaluation.fixed_query_view
         report["checkpoint_step"] = self.completed if checkpoint_step is None else checkpoint_step
         report["training_step"] = self.completed
@@ -930,7 +1051,28 @@ class Trainer:
             path.write_text(json.dumps(report, indent=2) + "\n")
         prefix = f"{split}/{checkpoint_tag}" if checkpoint_tag else split
         self.tracker.log(self.completed, {f"{prefix}/{k}": v for k, v in _flatten_numbers(report).items()})
+        if checkpoint_tag in {'best', 'last'} and self.cfg.evaluation.mistake_samples:
+            self._evaluate_mistakes(split, checkpoint_tag=checkpoint_tag)
         return report
+
+    def _evaluate_mistakes(self, split, *, checkpoint_tag=None):
+        """Error-prefix diagnostics never enter clean checkpoint selection."""
+        if self.cfg.protocol.mistake_source == 'natural':
+            from cot_navigation.evaluation.mistakes import evaluate_cases
+            cases = self.correction_catalog.cases(split, self.cfg.evaluation.mistake_samples,
+                                                  self.cfg.evaluation.seed)
+            report = evaluate_cases(self.raw, cases, self.cfg, self.tok)
+        else:
+            from cot_navigation.evaluation.mistakes import evaluate_mistakes
+            ids = self._selected_ids(split, self.cfg.evaluation.mistake_samples)
+            rows = [self._render_task(i) for i in ids]
+            report = evaluate_mistakes(self.raw, rows, self.cfg, self.tok)
+        prefix = 'correction' if split == 'val' else f'correction/{checkpoint_tag}'
+        self.tracker.log(self.completed, {f'{prefix}/{k}': v for k, v in _flatten_numbers(report).items()})
+        if self.persist:
+            suffix = 'latest' if split == 'val' else f'{split}_{checkpoint_tag}'
+            path = self.out/'eval'/f'correction_{suffix}.json'
+            path.write_text(json.dumps({'step': self.completed, **report}, indent=2)+'\n')
 
     def _evaluate_extra(self, tag: str, step: int, spec: str) -> None:
         name, path = spec.split("=", 1)
@@ -980,15 +1122,26 @@ class Trainer:
             latest = load_checkpoint(self.out / "checkpoints/latest.pt", map_location="cpu")
             self.raw.load_state_dict(latest["model"])
 
+    def _inference_model(self):
+        if self.cfg.evaluation.compile_generation and self.device.type == "cuda":
+            if not hasattr(self, "_generation_model"):
+                from cot_navigation.models.compiled_inference import CompiledInference
+                self._generation_model = CompiledInference(self.raw)
+            return self._generation_model
+        return self.raw
+
     def _teacher_forced(self, rows) -> dict:
         accumulator = MetricAccumulator()
+        # Keep no-grad inference specializations out of training's code cache.
+        inference = (self._inference_model() if self.cfg.evaluation.compile_generation
+                     and self.device.type == "cuda" else self.model)
         iterator = iter(rows)
         while chunk := list(islice(iterator, self.cfg.evaluation.batch_size)):
             arrays = collate_examples(chunk, self.tok.pad, self.cfg.train.bucket_multiple)
             batch = {k: torch.from_numpy(v).to(self.device) for k, v in arrays.items()}
             with torch.no_grad(), torch.autocast(device_type=self.device.type, dtype=torch.bfloat16,
                                                enabled=self.cfg.train.precision == "bf16"):
-                logits = self.model(batch["tokens"])
+                logits = inference(batch["tokens"])
             index = batch["answer_index"]
             picked = logits[torch.arange(logits.shape[0], device=self.device), index - 1].argmax(dim=-1).tolist()
             for token, row in zip(picked, chunk):
@@ -998,23 +1151,48 @@ class Trainer:
                                     "distance": row.meta.get("distance"), "filler_tokens": row.filler_tokens})
         return {**accumulator.result(), "source": "teacher_forced"}
 
+    def _free_batch_size(self) -> int:
+        cfg = self.cfg
+        size = cfg.evaluation.free_batch_size or cfg.evaluation.batch_size
+        if cfg.evaluation.free_max_cache_mb and cfg.protocol.name not in {"direct", "filler"}:
+            element_bytes = 2 if cfg.train.precision == "bf16" and self.device.type == "cuda" else 4
+            per_row = 2 * cfg.model.layers * cfg.model.d_model * cfg.model.max_seq_len * element_bytes
+            size = min(size, max(1, int(cfg.evaluation.free_max_cache_mb * 1024**2 // per_row)))
+        return size
+
     def _free(self, rows, *, record_name: str | None = None) -> dict:
         accumulator = MetricAccumulator()
+        marker_queries = marker_events = marker_correct = query_count = 0
+        generation_seconds = diagnostic_seconds = 0.
+        generation_batches = 0
         preview = []
         predictions = None
-        if self.persist and record_name:
+        if self.persist and (record_name or self.cfg.evaluation.save_trace_tokens):
+            record_name = record_name or f"val_{self.completed:08d}"
             (self.out / "eval").mkdir(exist_ok=True)
             predictions = self.out / "eval" / f"predictions_{record_name}.jsonl"
             predictions.write_text("")
-        iterator = iter(rows)
-        while chunk := list(islice(iterator, self.cfg.evaluation.batch_size)):
+        generation_model = self._inference_model()
+        size = self._free_batch_size()
+        for chunk in _generation_chunks(rows, size, self.cfg.evaluation.free_max_prefill_tokens,
+                                        filler_length(self.cfg) if self.cfg.protocol.name == "filler" else 0):
             prompts = [row.tokens[:row.prompt_len] for row in chunk]
+            generation_t0 = time.perf_counter()
             with torch.no_grad():
-                generated = generate(self.raw, prompts, self.cfg.protocol.name, self.tok, self.cfg.train.precision,
+                generated = generate(generation_model, prompts, self.cfg.protocol.name, self.tok, self.cfg.train.precision,
                                      filler_tokens=filler_length(self.cfg),
                                      max_new_tokens=self.cfg.evaluation.max_new_tokens,
                                      cot_margin=self.cfg.protocol.cot_margin)
+            generation_seconds += time.perf_counter() - generation_t0
+            generation_batches += 1
+            diagnostic_t0 = time.perf_counter()
             for row, gen in zip(chunk, generated):
+                if self.cfg.protocol.enable_mistake:
+                    events = gen['trace_tokens'].count(self.tok.id('<MISTAKE>'))
+                    query_count += 1
+                    marker_queries += int(events > 0)
+                    marker_events += events
+                    marker_correct += int(events > 0 and gen['pred'] == row.label)
                 item = {"correct": gen["pred"] == row.label and not gen["format_fail"],
                         "format_fail": gen["format_fail"], "label": row.label, "shape": row.meta.get("shape"),
                         "distance": row.meta.get("distance"), "filler_tokens": row.filler_tokens, "generation_limit_reached": gen["generation_limit_reached"]}
@@ -1047,6 +1225,10 @@ class Trainer:
                               **{k: v for k, v in item.items() if k in (
                                   "correct", "format_fail", "label", "shape", "distance",
                                   "cot_interrupted", "forced_stop")}}
+                    if self.cfg.evaluation.save_trace_tokens:
+                        record.update(prompt_tokens=row.tokens[:row.prompt_len],
+                                      trace_tokens=gen["trace_tokens"],
+                                      generation_limit_reached=gen["generation_limit_reached"])
                     with predictions.open("a") as handle:
                         handle.write(json.dumps(record) + "\n")
                 if self.persist and len(preview) < 4:
@@ -1055,9 +1237,18 @@ class Trainer:
             (self.out / "traces").mkdir(exist_ok=True)
             suffix = record_name or f"{self.completed:08d}"
             (self.out / "traces" / f"free_{suffix}.txt").write_text("\n\n".join(preview) + "\n")
+            diagnostic_seconds += time.perf_counter() - diagnostic_t0
         report = accumulator.result()
+        report.update(generation_wall_time=generation_seconds, diagnostics_wall_time=diagnostic_seconds,
+                      generation_batches=generation_batches, generation_batch_limit=size,
+                      compiled_generation=generation_model is not self.raw,
+                      generation_compile_fallbacks=len(getattr(generation_model, "compile_fallbacks", ())))
         report["source"] = "free_generation"
         report["filler_prefill"] = self.cfg.protocol.name == "filler"
+        if self.cfg.protocol.enable_mistake:
+            report['mistake_markers'] = dict(n=query_count, events=marker_events,
+                query_rate=marker_queries/max(1,query_count),
+                accuracy_with_marker=marker_correct/marker_queries if marker_queries else None)
         return report
 
     def _payload(self) -> dict:
@@ -1088,22 +1279,22 @@ class Trainer:
 
 
 def _reduce_logged(parts_list: list[dict], n_task: int, n_walk: int) -> dict:
-    def pooled(field: str, mask: str):
+    if not parts_list:
+        return {}
+    # Transfer seven scalars once, rather than synchronizing three masks and
+    # three indexed means for every microbatch. No dynamic GPU indexing.
+    fields = (("answer", "has_answer"), ("trace", "has_trace"), ("walk", "has_walk"))
+    totals = []
+    for parts in parts_list:
         values = []
-        for parts in parts_list:
+        for field, mask in fields:
             take = parts[mask]
-            if int(take.sum().item()) == 0:
-                continue
-            values.append(parts[field][take])
-        if not values:
-            return None
-        cat = torch.cat(values)
-        return float(cat.mean().item())
-
+            values.extend((torch.where(take, parts[field], 0.).sum(), take.sum()))
+        values.append(parts.get("backward_total", parts["answer"].new_zeros(())))
+        totals.append(torch.stack(values))
+    sums = torch.stack(totals).sum(0).detach().cpu().tolist()
+    answer, trace, walk = [sums[i] / sums[i + 1] if sums[i + 1] else None for i in (0, 2, 4)]
     out = {}
-    answer = pooled("answer", "has_answer")
-    trace = pooled("trace", "has_trace")
-    walk = pooled("walk", "has_walk")
     total = 0.0
     have = False
     if answer is not None and n_task > 0:
@@ -1118,7 +1309,7 @@ def _reduce_logged(parts_list: list[dict], n_task: int, n_walk: int) -> dict:
         total += walk
         have = True
     if have:
-        out["total_loss"] = total
+        out["total_loss"] = sums[6] if "backward_total" in parts_list[0] else total
     return out
 
 

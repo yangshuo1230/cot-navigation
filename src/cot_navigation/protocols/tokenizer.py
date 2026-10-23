@@ -14,7 +14,7 @@ _SPECIALS = (
 )
 
 class Tokenizer:
-    def __init__(self, n_node_tokens: int = 256, *, enable_stop=False, world_tokens=0):
+    def __init__(self, n_node_tokens: int = 256, *, enable_stop=False, world_tokens=0, enable_mistake=False):
         if n_node_tokens < 1:
             raise ValueError("n_node_tokens must be positive")
         self.node_lo = len(_SPECIALS)
@@ -22,7 +22,9 @@ class Tokenizer:
         if enable_stop:
             self.itos.append('<STOP>')
         self.itos += [f'<WORLD_{i}>' for i in range(world_tokens)]
-        self._version = 'v3_append' if enable_stop or world_tokens else VOCAB_VERSION
+        if enable_mistake:
+            self.itos.append('<MISTAKE>')
+        self._version = 'v4_mistake_append' if enable_mistake else 'v3_append' if enable_stop or world_tokens else VOCAB_VERSION
         self.stoi = {name: i for i, name in enumerate(self.itos)}
         self.pad = self.stoi["<PAD>"]
         self.yes = self.stoi["<YES>"]
@@ -42,7 +44,8 @@ class Tokenizer:
     @classmethod
     def from_config(cls, cfg):
         return cls(cfg.data.node_vocab, enable_stop=cfg.protocol.cot_margin > 0,
-                   world_tokens=len(cfg.train.world_roots))
+                   world_tokens=len(cfg.train.world_roots),
+                   enable_mistake=getattr(cfg.protocol, 'enable_mistake', False))
 
     def id(self, name: str) -> int:
         try:

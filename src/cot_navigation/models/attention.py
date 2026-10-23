@@ -56,6 +56,32 @@ class KVCache:
         self.v = [torch.zeros(batch, heads, max_len, dim, device=device, dtype=dtype) for _ in range(n_layers)]
         self.lengths = torch.zeros(batch, dtype=torch.long, device=device)
         self.max_len = max_len
+        # Optional CPU-side bound maintained by rollout, including the token
+        # being written. None keeps the full-cache API for external callers.
+        self.valid_length: int | None = None
+
+    def select_batch(self, indices: torch.Tensor) -> None:
+        """Remove finished sequences without changing absolute positions."""
+        if self.valid_length is None:
+            # External/reference callers may read the entire allocation.
+            self.k = [x.index_select(0, indices) for x in self.k]
+            self.v = [x.index_select(0, indices) for x in self.v]
+        else:
+            # Rollout supplies a CPU upper bound for initialized keys. Compact
+            # only that prefix, reusing the allocation. Future slots can stay
+            # stale: causal masking excludes them until write() overwrites them.
+            # index_select creates a temporary, so overlapping row moves and
+            # arbitrary permutations are safe before the in-place copy.
+            end = self.valid_length
+            count = indices.numel()
+            for buffers in (self.k, self.v):
+                for layer, tensor in enumerate(buffers):
+                    selected = tensor[:, :, :end].index_select(0, indices)
+                    tensor[:count, :, :end].copy_(selected)
+                    buffers[layer] = tensor[:count]
+        self.lengths = self.lengths.index_select(0, indices)
+        if hasattr(self, "record_tokens"):
+            self.record_tokens = self.record_tokens.index_select(0, indices)
 
     def write(self, layer: int, k: torch.Tensor, v: torch.Tensor, positions: torch.Tensor) -> None:
         batch, heads, length, _dim = k.shape
@@ -87,6 +113,7 @@ class CausalSelfAttention(nn.Module):
         layer_idx: int = 0,
         cache_mode: str | None = None,
         return_attn: bool = False,
+        record_keep=None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         batch, length, _ = x.shape
         qkv = self.qkv(x).view(batch, length, 3, self.n_heads, self.head_dim)
@@ -95,10 +122,23 @@ class CausalSelfAttention(nn.Module):
         k = apply_rope(k.transpose(1, 2), positions, self.rope_base)
         v = v.transpose(1, 2)
         weights = None
-        if cache is not None and cache_mode == "decode":
+        if record_keep is not None:
+            if cache is not None:
+                cache.write(layer_idx, k, v, positions)
+            if cache is not None and cache_mode == "decode":
+                k, v = cache.k[layer_idx], cache.v[layer_idx]
+            if isinstance(record_keep, torch.Tensor):
+                out, weights = self._attend(q, k, v, record_keep, force_math=return_attn or self.attn_impl == "math")
+            else:
+                from cot_navigation.models.record_attention import compiled_flex
+                out = compiled_flex(q, k, v, block_mask=record_keep)
+        elif cache is not None and cache_mode == "decode":
             cache.write(layer_idx, k, v, positions)
-            k_all = cache.k[layer_idx]
-            v_all = cache.v[layer_idx]
+            # Never shorten the allocated cache: STOP may rewind individual
+            # rows. Only skip unread future keys in this attention operation.
+            end = cache.valid_length
+            k_all = cache.k[layer_idx][:, :, :end]
+            v_all = cache.v[layer_idx][:, :, :end]
             key_index = torch.arange(k_all.shape[2], device=x.device)
             # Absolute position of the newest query. q_len may be 1 while k_len is longer.
             newest = positions[:, -1]

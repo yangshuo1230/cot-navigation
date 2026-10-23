@@ -1,0 +1,146 @@
+output_dir: /mnt/ningxuefei/yangshuo/cot-navigation/outputs/hard_dag_v1/launches/hard_dag_v1_s0/fixed/n36/stage_b/dfs_state
+data:
+  knowledge: parametric_graph
+  n_nodes: 36
+  n_edges: 72
+  shapes:
+    main:
+      layers: 6
+      width: 6
+  splits:
+    train: 0
+    val: 0
+    test: 0
+  root: data/hard_dag_v1/fixed_r6b6_n36_m72_s0
+  graph_family: multiscale_dag_v1
+  node_vocab: 256
+  data_seed: 0
+  graph_seeds:
+  - 0
+  max_attempts: 2000
+  workers: 4
+  chunk_size: 256
+  audit_fraction: 1.0
+  min_edge_coverage: 100
+  n_walks: 5000
+  walk_lengths:
+  - 1
+  - 2
+  - 3
+  - 4
+  query_ratios:
+  - 0.7
+  - 0.15
+  - 0.15
+  max_prepared_paths: 1000000
+  max_prepared_path_nodes: 20000000
+  graph_shape: main
+  graph_seed: 0
+  include_one_hop_queries: true
+  context_holdout_first: false
+model:
+  layers: 6
+  heads: 1
+  d_model: 128
+  d_ff: 512
+  activation: gelu
+  position_encoding: rope
+  max_seq_len: 32768
+  tie_embeddings: true
+  dropout: 0.0
+  ffn: standard
+  attn_impl: sdpa
+  compile: true
+  compile_mode: default
+  rope_base: 10000.0
+  swa_records: 0
+  swa_backend: flex
+protocol:
+  name: dfs_state
+  filler_tokens: null
+  negative_random_path: false
+  random_search_order: true
+  cot_margin: 8
+  trajectory_variants: 4
+train:
+  max_steps: 75000
+  effective_query_batch_size: 64
+  walk_batch_size: 16
+  lr: 0.001
+  min_lr: 0.0001
+  warmup_steps: 100
+  betas:
+  - 0.9
+  - 0.99
+  weight_decay: 0.01
+  grad_clip: 1.0
+  trace_loss_lambda: 1.0
+  precision: bf16
+  eval_interval: 5000
+  save_interval: 5000
+  log_interval: 10
+  microbatch_size: 0
+  bucket_multiple: 64
+  pin_memory: true
+  max_tokens_per_microbatch: 16384
+  persist_outputs: true
+  deterministic: false
+  stage: B
+  task_only: false
+  skip_knowledge_stage: false
+  exposure_seed: 0
+  keep_last: 1
+  eval_samples: 128
+  free_gen_samples: 64
+  model_seed: 0
+  fixed_query_pool: full
+  balance_query_labels: true
+  one_hop_fraction: 0.25
+  shuffle_context_edges: false
+  query_hops: all
+  curriculum_stage_steps: []
+  walk_loss_mode: fixed
+  walk_loss_weight: 1.0
+  walk_balance_decay: 0.98
+  scale_roots:
+  - data/hard_dag_v1/fixed_r6b6_n36_m72_s0
+  scale_weights:
+  - 1.0
+  scale_stage_ends: []
+  scale_stage_weights: []
+  scale_walk_weights: []
+  world_roots: []
+tracking:
+  mode: online
+  project: cot-graph-reasoning
+  entity: null
+  name: hard_dag_v1_s0/fixed/n36/stage_b/dfs_state
+  group: hard_dag_v1_s0
+  tags:
+  - hard_dag_v1
+  - nonlayered
+  notes: Hidden-topological multiscale DAG; distance is rank-band gap, not shortest
+    hops. Full reference traces; no truncation.
+  variant: fixed-n36-stage_b-dfs_state
+  online_failure: error
+  upload_artifacts: false
+  resume: allow
+runtime:
+  device: cuda
+  cuda_device: 0
+  probe_kernels: false
+  fused_adamw: auto
+  smoke: false
+evaluation:
+  batch_size: 16
+  seed: 1729
+  test_samples: 256
+  max_new_tokens: 0
+  fixed_query_view: full
+  selection_metric: balanced_accuracy
+  final_checkpoints:
+  - best
+  - last
+  extra_sets: []
+  selection_min_step: 0
+  trace_diagnostics: false
