@@ -13,7 +13,7 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=Path("research/mechanistic_20261018/results"))
+    parser.add_argument("--input", type=Path, default=Path("studies/mechanistic/results"))
     parser.add_argument("--gpu", default="0")
     args = parser.parse_args()
     if args.gpu != "0":

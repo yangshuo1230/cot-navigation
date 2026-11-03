@@ -29,7 +29,7 @@ CTX_RUN = ROOT / "outputs/explore_v1/launches/explore_v1_s012/context/standard/t
 CTX_DATA = ROOT / "data/explore_v1/context_standard_n16_m24_train50000_val10000_test10000_s0"
 FIX_RUN = ROOT / "outputs/explore_v1/launches/explore_v1_s012/fixed/standard/seed0/direct_curriculum/direct"
 FIG = ROOT / "figures/explore_v1/direct_curriculum_hop3_layers.png"
-JSON = ROOT / "research/block_membership_probe_20261021/direct_curriculum_hop3_layers.json"
+JSON = ROOT / "studies/block_membership_probe/direct_curriculum_hop3_layers.json"
 DEVICE = "cuda:0"
 N_PER_CLASS = 64
 

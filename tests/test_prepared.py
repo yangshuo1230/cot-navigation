@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 from cot_navigation.config import filler_length, load_config
 from cot_navigation.data.dataset import ContextStore, ParametricWorld, collate_examples
@@ -123,6 +124,8 @@ def test_cached_dfs_keeps_evaluation_field_diagnostics(prepared, monkeypatch):
     trainer = Trainer.__new__(Trainer)
     trainer.cfg = deepcopy(cfg)
     trainer.cfg.protocol.name = "dfs_state"
+    trainer.cfg.evaluation.trace_diagnostics = True
+    trainer.device = torch.device("cpu")
     trainer.tok = Tokenizer(cfg.data.node_vocab)
     trainer.store = source if isinstance(source, ContextStore) else None
     trainer.world = source if isinstance(source, ParametricWorld) else None

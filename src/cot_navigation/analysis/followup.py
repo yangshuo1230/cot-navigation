@@ -16,8 +16,8 @@ from pathlib import Path
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--previous',type=Path,default=Path('research/mechanistic_20261018/results'))
-    parser.add_argument('--output',type=Path,default=Path('research/mechanistic_followup_20261019/results'))
+    parser.add_argument('--previous',type=Path,default=Path('studies/mechanistic/results'))
+    parser.add_argument('--output',type=Path,default=Path('studies/mechanistic_followup/results'))
     parser.add_argument('--gpu',default='0')
     parser.add_argument('--models',nargs='*')
     parser.add_argument('--resume',action='store_true')

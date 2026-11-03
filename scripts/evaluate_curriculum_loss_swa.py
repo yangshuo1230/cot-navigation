@@ -42,7 +42,7 @@ def main():
         for case in cases:
             path=run/'eval'/f"predictions_test_{args.checkpoint}{'' if case=='main' else '-'+case}.jsonl"
             if not path.exists():raise FileNotFoundError(path)
-    out=ROOT/'research/curriculum_loss_swa_20261021/results'/args.run_name/args.checkpoint
+    out=ROOT/'studies/curriculum_loss_swa/results'/args.run_name/args.checkpoint
     out.mkdir(parents=True,exist_ok=True)
     rows=[]
     for job,cfg,run,cases in entries:
@@ -60,7 +60,7 @@ def main():
         w=csv.DictWriter(f,list(rows[0]));w.writeheader();w.writerows(rows)
     if args.audit_traces:
         if args.checkpoint!='best':raise ValueError('Semantic replay currently targets validation-best only')
-        sys.path.insert(0,str(ROOT/'research/curriculum_trace_errors_20261021'))
+        sys.path.insert(0,str(ROOT/'studies/curriculum_trace_errors'))
         import audit
         audit.OUT=out/'trace_audit'
         for job,cfg,run,cases in entries:

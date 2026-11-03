@@ -333,7 +333,7 @@ def error_stage(am,splits,free,count,steps):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output',type=Path,default=Path('research/scale_mechanistic_20261019/results'))
+    parser.add_argument('--output',type=Path,default=Path('studies/scale_mechanistic/results'))
     parser.add_argument('--train',type=int,default=256)
     parser.add_argument('--val',type=int,default=96)
     parser.add_argument('--test',type=int,default=128)

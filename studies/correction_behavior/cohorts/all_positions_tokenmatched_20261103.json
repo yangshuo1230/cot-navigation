@@ -1,0 +1,157 @@
+{
+  "protocol_version": 2,
+  "cohort": "all_positions_tokenmatched_20261103",
+  "output": "outputs/analysis/correction_behavior/all_positions_tokenmatched_20261103",
+  "capture_probe_test": true,
+  "controls": "全位置错误池v2，token曝光匹配；按相同深度/初始化比较0/30/60%，各两个seed。排除废弃批次与已停止等步数批次。",
+  "settings": {
+    "queries": 256,
+    "batch": 32,
+    "query_seed": 20261031,
+    "checkpoint_step": "per_model_final",
+    "precision": "bf16",
+    "population": "reachable",
+    "max_seq_len": 4096
+  },
+  "tasks": [
+    "n32",
+    "n64",
+    "main",
+    "deep",
+    "hard"
+  ],
+  "models": [
+    {
+      "id": "l6_p0_s0",
+      "group": "l6_p0",
+      "layers": 6,
+      "error_rate": 0,
+      "training_arm": "correction",
+      "seed": 0,
+      "checkpoint_step": 262370,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l6_p0/s0"
+    },
+    {
+      "id": "l6_p0_s1",
+      "group": "l6_p0",
+      "layers": 6,
+      "error_rate": 0,
+      "training_arm": "correction",
+      "seed": 1,
+      "checkpoint_step": 262370,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l6_p0/s1"
+    },
+    {
+      "id": "l6_p30_s0",
+      "group": "l6_p30",
+      "layers": 6,
+      "error_rate": 0.3,
+      "training_arm": "correction",
+      "seed": 0,
+      "checkpoint_step": 226929,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l6_p30/s0"
+    },
+    {
+      "id": "l6_p30_s1",
+      "group": "l6_p30",
+      "layers": 6,
+      "error_rate": 0.3,
+      "training_arm": "correction",
+      "seed": 1,
+      "checkpoint_step": 226929,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l6_p30/s1"
+    },
+    {
+      "id": "l6_p60_s0",
+      "group": "l6_p60",
+      "layers": 6,
+      "error_rate": 0.6,
+      "training_arm": "correction",
+      "seed": 0,
+      "checkpoint_step": 200000,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l6_p60/s0"
+    },
+    {
+      "id": "l6_p60_s1",
+      "group": "l6_p60",
+      "layers": 6,
+      "error_rate": 0.6,
+      "training_arm": "correction",
+      "seed": 1,
+      "checkpoint_step": 200000,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l6_p60/s1"
+    },
+    {
+      "id": "l9_p0_s0",
+      "group": "l9_p0",
+      "layers": 9,
+      "error_rate": 0,
+      "training_arm": "correction",
+      "seed": 0,
+      "checkpoint_step": 262370,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l9_p0/s0"
+    },
+    {
+      "id": "l9_p0_s1",
+      "group": "l9_p0",
+      "layers": 9,
+      "error_rate": 0,
+      "training_arm": "correction",
+      "seed": 1,
+      "checkpoint_step": 262370,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l9_p0/s1"
+    },
+    {
+      "id": "l9_p30_s0",
+      "group": "l9_p30",
+      "layers": 9,
+      "error_rate": 0.3,
+      "training_arm": "correction",
+      "seed": 0,
+      "checkpoint_step": 226929,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l9_p30/s0"
+    },
+    {
+      "id": "l9_p30_s1",
+      "group": "l9_p30",
+      "layers": 9,
+      "error_rate": 0.3,
+      "training_arm": "correction",
+      "seed": 1,
+      "checkpoint_step": 226929,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l9_p30/s1"
+    },
+    {
+      "id": "l9_p60_s0",
+      "group": "l9_p60",
+      "layers": 9,
+      "error_rate": 0.6,
+      "training_arm": "correction",
+      "seed": 0,
+      "checkpoint_step": 200000,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l9_p60/s0"
+    },
+    {
+      "id": "l9_p60_s1",
+      "group": "l9_p60",
+      "layers": 9,
+      "error_rate": 0.6,
+      "training_arm": "correction",
+      "seed": 1,
+      "checkpoint_step": 200000,
+      "checkpoint_name": "latest.pt",
+      "run": "outputs/correction_all_positions_v2/launches/dfs_all_positions_tokenmatched_20261102/dfs_state/l9_p60/s1"
+    }
+  ]
+}

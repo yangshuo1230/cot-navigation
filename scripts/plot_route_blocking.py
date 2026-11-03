@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-MODELS = ROOT / "research/scale_mechanistic_20261019/results/models"
+MODELS = ROOT / "studies/scale_mechanistic/results/models"
 OUT = ROOT / "figures/scale_v1/route_blocking.png"
 SCALES = ["l4", "l6", "l8", "l10", "curriculum"]
 TICKS = ["N16", "N36", "N64", "N100", "Curriculum"]

@@ -25,7 +25,19 @@ def _configs(args) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="cot-nav")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'study':
+        from cot_navigation.experiments.study import main as study_main
+        return study_main(argv[1:])
+    if argv and argv[0] == 'workflow':
+        from cot_navigation.experiments.workflow import main as workflow_main
+        return workflow_main(argv[1:])
+    if argv and argv[0] == 'catalog':
+        from cot_navigation.experiments.study import catalog
+        query = ' '.join(argv[1:]).lower()
+        print(json.dumps({k:v for k,v in catalog().items() if query in (k+' '+v['description']).lower()}, indent=2, ensure_ascii=False))
+        return 0
+    parser = argparse.ArgumentParser(prog="cot-nav", epilog="Also: workflow CONFIG [--execute], catalog [SEARCH]")
     sub = parser.add_subparsers(dest="command", required=True)
 
     env_p = sub.add_parser("env", help="print host, torch, CUDA, and kernel probe")

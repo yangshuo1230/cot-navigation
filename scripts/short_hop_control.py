@@ -144,6 +144,8 @@ def trainer_type():
             return out
         def _evaluate_final_checkpoints(self):
             super()._evaluate_final_checkpoints()
+            if not self.cfg.evaluation.extra_query_views:
+                return
             # Reverse negatives are separate diagnostics, not checkpoint selection.
             a=self.world.queries;ids=self.world.indices('test','full')
             latest=torch.load(self.out/'checkpoints/latest.pt',map_location='cpu',weights_only=False)
@@ -169,15 +171,15 @@ def build(output,args):
     for arm in ['knowledge','short3','all_hops']:
         for protocol in (['direct'] if arm=='knowledge' else args.protocols):
             name=arm if arm=='knowledge' else arm+'/'+protocol
-            c=yaml.safe_load((old/protocol/'resolved_config.yaml').read_text())
+            c=apply_training_profile(yaml.safe_load((old/protocol/'resolved_config.yaml').read_text()))
             c['output_dir']=str(output/name);c['data']['root']=str(DATA)
             t=c['train'];t.update(stage='A' if arm=='knowledge' else 'B',max_steps=1000 if arm=='knowledge' else args.steps,
                 scale_roots=[str(DATA)],scale_weights=[1.0],scale_stage_ends=[],scale_stage_weights=[],scale_walk_weights=[],
-                world_roots=[str(DATA/'main-seed0')],free_gen_samples=128,eval_samples=128,eval_interval=5000,save_interval=5000,
+                world_roots=[str(DATA/'main-seed0')],free_gen_samples=128,eval_samples=128,eval_interval=20000,free_eval_interval=20000,save_interval=10000,
                 walk_batch_size=64 if arm=='knowledge' else 16)
             c['tracking'].update(mode=args.tracking,name=f'{args.run_name}/{name}',group=args.run_name,variant=arm,
                 tags=['fixed_short3','n100','matched_single_world',arm],notes='Forward query restriction only; reverse negatives 12.5%; CoT/WALK depth not restricted')
-            c['evaluation'].update(extra_sets=[],final_checkpoints=[] if arm=='knowledge' else ['best','last'],test_samples=256,trace_diagnostics=False)
+            c['evaluation'].update(extra_sets=[],final_checkpoints=[] if arm=='knowledge' else ['last'],test_samples=256,trace_diagnostics=False)
             if arm=='knowledge':c['protocol'].update(name='direct',negative_random_path=False,random_search_order=False,trajectory_variants=0)
             f=configs/(name.replace('/','_')+'.yaml');f.write_text(yaml.safe_dump(c,sort_keys=False))
             jobs.append({'name':name,'config':str(f),'steps':t['max_steps']})
@@ -191,7 +193,7 @@ def build(output,args):
 
 def prepare(output,args,jobs):
     import numpy as np
-    from cot_navigation.config import load_config
+    from cot_navigation.config import load_config, apply_training_profile
     from cot_navigation.data.dataset import ParametricWorld
     from cot_navigation.protocols.tokenizer import Tokenizer
     from cot_navigation.data.scale_prepared import prepare_variants
@@ -230,7 +232,7 @@ def main():
     if not args.run_name.replace('_','').replace('-','').isalnum():parser.error('plain run name required')
     output=ROOT/'outputs/fixed_short3_v1/launches'/args.run_name;output.mkdir(parents=True,exist_ok=True)
     if args.run_one:
-        from cot_navigation.config import load_config
+        from cot_navigation.config import load_config, apply_training_profile
         cfg=load_config([output/'configs'/(args.run_one.replace('/','_')+'.yaml')])
         checkpoint=Path(cfg.output_dir)/'checkpoints/latest.pt'
         trainer=trainer_type()(cfg,resume=str(checkpoint) if args.resume and checkpoint.exists() else None,

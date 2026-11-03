@@ -123,10 +123,10 @@ class TrainConfig:
     grad_clip: float = 1.0
     trace_loss_lambda: float = 1.0  # normalized task loss: 2*(answer+lambda*trace)/(1+lambda)
     precision: str = "bf16"
-    eval_interval: int = 1000
+    eval_interval: int = 20000
     free_eval_interval: int = 0  # 0 follows eval_interval; independent expensive rollouts
-    save_interval: int = 1000
-    log_interval: int = 10
+    save_interval: int = 10000
+    log_interval: int = 100
     microbatch_size: int = 0
     bucket_multiple: int = 64
     pin_memory: bool = True
@@ -191,25 +191,26 @@ class RuntimeConfig:
 @dataclass
 class EvaluationConfig:
     batch_size: int = 8
-    free_batch_size: int = 0  # 0 follows batch_size, independent of teacher forcing
-    free_max_cache_mb: int = 0  # optional bound on estimated K/V allocation
-    free_max_prefill_tokens: int = 0  # optional padded prompt-token batch limit
-    compile_generation: bool = False  # GPU opt-in; CPU retains reference eager decode
+    free_batch_size: int = 64  # 0 follows batch_size, independent of teacher forcing
+    free_max_cache_mb: int = 8192  # optional bound on estimated K/V allocation
+    free_max_prefill_tokens: int = 65536  # optional padded prompt-token batch limit
+    compile_generation: bool | None = None  # auto: CUDA full attention; CPU/SWA use reference
     mistake_samples: int = 0  # held-out error-prefix diagnostics, separate from clean selection
     seed: int = 1729
     # 0 means the entire test split, independently of short training validation.
-    test_samples: int = 0
+    test_samples: int = 256
     # 0 uses remaining context. This is a loop guard, not a search budget:
     # hitting it is a failure and never triggers an oracle/forced answer.
     max_new_tokens: int = 0
     fixed_query_view: str = "balanced"  # balanced | full; affects val/test only
     selection_metric: str = "answer_accuracy"
-    final_checkpoints: tuple[str, ...] = ()  # optional full test after training
+    final_checkpoints: tuple[str, ...] = ("last",)  # optional full test after training
     # name=path entries. Context path is a dataset root; fixed path is a world dir.
     extra_sets: tuple[str, ...] = ()
+    extra_query_views: bool = False  # opt-in specialized short-hop/block holdout views
     selection_min_step: int = 0  # free-gen val before this step cannot select best
     save_trace_tokens: bool = False  # retain free rollouts for semantic search audits
-    trace_diagnostics: bool = True  # field-level DFS/BFS comparison during free eval
+    trace_diagnostics: bool = False  # field-level DFS/BFS comparison during free eval
 
 
 @dataclass
@@ -224,6 +225,8 @@ class AppConfig:
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
 
     def validate(self) -> None:
+        if self.evaluation.compile_generation is None:
+            self.evaluation.compile_generation = not bool(self.model.swa_records)
         # Smoke is an ephemeral check, never a saved run, even with CLI overrides.
         if self.runtime.smoke:
             self.train.persist_outputs = False
@@ -278,10 +281,10 @@ class AppConfig:
         _require(self.protocol.mistake_source in {'synthetic', 'natural'}, 'mistake_source')
         _require(0 <= self.protocol.natural_complex_share <= 1, 'natural_complex_share')
         _require(self.protocol.mistake_source != 'natural' or
-                 (self.protocol.enable_mistake and not self.protocol.mistake_mask_errors),
+                 (self.protocol.enable_mistake and (not self.protocol.mistake_mask_errors or self.protocol.name in {'dfs_nodes','bfs_nodes'})),
                  'natural candidate study uses MISTAKE with full trace supervision')
         if self.protocol.enable_mistake:
-            _require(self.data.knowledge == "context_graph" and self.protocol.name in {"dfs_state", "bfs_state"}
+            _require(self.data.knowledge == "context_graph" and self.protocol.name in {"dfs_state", "bfs_state", "dfs_nodes", "bfs_nodes"}
                      and self.protocol.trajectory_variants > 0 and bool(self.train.scale_roots),
                      "MISTAKE study requires context state traces with offline scale variants")
             _require(self.protocol.cot_margin >= 1, "MISTAKE traces require boundary-aware truncation")
@@ -467,16 +470,41 @@ def _worst_sequence_len(cfg: AppConfig) -> int:
     return longest
 
 
+def apply_training_profile(raw: Mapping[str, Any]) -> dict:
+    """Apply current defaults when creating a NEW trial from a historical config.
+
+    Saved/resolved run configurations are never rewritten by the loader.
+    Explicit experiment/CLI overrides should be applied after this function.
+    """
+    profile = Path(__file__).resolve().parents[2] / "configs/train/throughput.yaml"
+    out = deep_merge(raw, _load_yaml_tree(profile))
+    if out.get("train", {}).get("stage") == "A":
+        out["evaluation"]["final_checkpoints"] = []
+    if out.get("model", {}).get("swa_records", 0):
+        out["evaluation"]["compile_generation"] = False
+        out["model"]["compile"] = False
+    return out
+
+
 def load_config(paths: list[str | Path], overrides: list[str] | None = None) -> AppConfig:
     raw: dict[str, Any] = {}
     for path in paths:
-        raw = deep_merge(raw, _load_yaml_tree(Path(path)))
+        from cot_navigation.runtime.workspace import artifact_path
+        source = _load_yaml_tree(artifact_path(path))
+        if Path(path).name == 'resolved_config.yaml':
+            # Older saved runs predate opt-in diagnostics. Preserve their
+            # behavior without changing immutable files; a later overlay wins.
+            evaluation = source.setdefault('evaluation', {})
+            evaluation.setdefault('trace_diagnostics', True)
+            evaluation.setdefault('extra_query_views', True)
+        raw = deep_merge(raw, source)
     # Materialize typed defaults so valid optional settings are CLI-overridable
     # even when an experiment YAML does not repeat every default field.
     raw = to_plain(_app_from_dict(raw))
     for item in overrides or []:
         _apply_override(raw, item)
-    cfg = _app_from_dict(raw)
+    from cot_navigation.runtime.workspace import relocate
+    cfg = _app_from_dict(relocate(raw))
     cfg.validate()
     return cfg
 

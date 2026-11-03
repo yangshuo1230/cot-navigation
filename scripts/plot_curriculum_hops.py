@@ -16,8 +16,8 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTEXT_AUDIT = ROOT / "research/scale_trace_audit_20261019/results/context/curriculum"
-FIXED_AUDIT = ROOT / "research/scale_trace_audit_20261019/results/fixed/curriculum/stage_b"
+CONTEXT_AUDIT = ROOT / "studies/scale_trace_audit/results/context/curriculum"
+FIXED_AUDIT = ROOT / "studies/scale_trace_audit/results/fixed/curriculum/stage_b"
 OUT = ROOT / "figures/scale_v1/curriculum_hops"
 PROTOCOLS = [
     ("path", "Path"),

@@ -1,0 +1,11 @@
+version: 1
+run_name: fixed_packed
+steps:
+  - name: ${backend}/${protocol}/seed${seed}
+    kind: packed
+    module: cot_navigation.training.packed
+    matrix:
+      backend: [v6, v7]
+      protocol: [direct, dfs_state, dfs_nodes]
+      seed: [0]
+    args: [--repo-root, '${root}', --backend, '${backend}', --protocol, '${protocol}', --seed, '${seed}', --tracking, disabled]

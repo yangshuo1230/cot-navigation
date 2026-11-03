@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>自然 CoT 错误探针 · 交互结果</title>
+<style>
+:root{--ink:#18263d;--muted:#64748b;--line:#e1e7ef;--paper:#fff;--bg:#f3f6fa;--blue:#527faf;--orange:#d88035;--accent:#315cce;--good:#138168;--bad:#ba4c47}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.65 "Segoe UI","Microsoft YaHei",sans-serif}button,select,input{font:inherit}button,a,select,input{outline-offset:3px}button{cursor:pointer}a{color:var(--accent);text-decoration:none}
+header{background:#fff;border-bottom:1px solid var(--line)}.top{max-width:1480px;margin:auto;padding:28px 32px 22px}.eyebrow{font-size:11px;font-weight:700;letter-spacing:1.7px;color:var(--accent)}h1{font-size:31px;line-height:1.3;letter-spacing:-1px;margin:8px 0}h2{font-size:19px;margin:0}h3{font-size:14px;margin:0 0 12px}.subtitle,.muted{color:var(--muted)}.subtitle{margin:8px 0 0;max-width:970px}.topline,.section-head,.card-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.pill{display:inline-block;border:1px solid var(--line);border-radius:20px;padding:3px 10px;font-size:12px;background:white;color:var(--muted)}.pill.green{border-color:#b7dfd0;color:#18735d;background:#eff9f5}
+nav{max-width:1480px;margin:auto;display:flex;gap:25px;padding:0 32px 13px;overflow:auto;white-space:nowrap}nav a{font-size:13px;color:var(--muted)}nav a:hover{color:var(--accent)}main{max-width:1480px;margin:auto;padding:22px 32px 40px}section{scroll-margin-top:120px;margin-bottom:30px}.filterbar{position:sticky;top:0;z-index:20;background:#ffffffed;backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}.filters{max-width:1480px;margin:auto;padding:12px 32px;display:flex;align-items:end;gap:16px;flex-wrap:wrap}.control label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px}select{padding:6px 30px 6px 9px;border:1px solid #d5deeb;border-radius:6px;background:#fff;color:var(--ink);min-height:35px}.seg{display:flex;gap:2px;padding:3px;background:#edf1f7;border-radius:7px}.seg button{border:0;background:transparent;color:var(--muted);padding:5px 11px;border-radius:5px;font-size:12px;white-space:nowrap}.seg button[aria-pressed=true]{background:#fff;color:var(--ink);box-shadow:0 1px 3px #15284715}.btn{border:1px solid #d7dfeb;border-radius:6px;padding:6px 11px;background:white;color:var(--ink);font-size:12px}.btn:hover{border-color:var(--accent);color:var(--accent)}.btn.primary{background:var(--accent);color:white;border-color:var(--accent)}.filter-note{margin-left:auto;align-self:center;color:var(--muted);font-size:11px;max-width:145px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:16px 0}.card,.panel{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:18px 20px;box-shadow:0 2px 5px #223a5c03}.card-label{color:var(--muted);font-size:12px}.big{font-size:31px;font-weight:650;letter-spacing:-1px;margin:3px 0}.card-small{color:var(--muted);font-size:11px;min-height:18px}.cblue{color:var(--blue)}.corange{color:var(--orange)}.good{color:var(--good)}.bad{color:var(--bad)}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}.section-head{margin-bottom:12px;align-items:end}.section-head p{margin:3px 0 0;font-size:12px;color:var(--muted)}.section-head .actions{display:flex;gap:7px;flex-wrap:wrap}.chart{width:100%;overflow:auto}.chart svg{display:block;width:100%;height:auto}.chart svg text{font-family:"Segoe UI","Microsoft YaHei",sans-serif}.caption{font-size:11px;color:var(--muted);margin:8px 0 0}.legend{display:flex;gap:17px;align-items:center;color:var(--muted);font-size:12px}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}.note{border-left:3px solid #8ba8e5;background:#edf2fc;padding:11px 14px;border-radius:0 6px 6px 0;font-size:12px;color:#4d6284}.note.warm{background:#fff7ed;border-color:#dfb57c;color:#82643c}.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.spacer{flex:1}.small{font-size:12px}.support{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:12px}.support input{width:125px;accent-color:var(--accent)}.detail{margin-top:13px;display:grid;grid-template-columns:1fr 1fr;gap:12px}.detail-box{background:#f7f9fc;border:1px solid var(--line);border-radius:6px;padding:11px 13px;font-size:12px;min-height:67px}.detail-box strong{color:var(--ink)}.no-data{padding:35px;color:var(--muted);text-align:center;background:#f8fafc;border-radius:6px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:12px}th{text-align:left;font-weight:600;color:var(--muted);background:#f8fafc}th,td{padding:9px 11px;border-bottom:1px solid #e9edf3;white-space:nowrap}td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}.table-wrap tbody tr:hover{background:#f5f8ff}.badge{font-size:10px;border-radius:4px;padding:2px 5px;background:#f0f3f8;color:#61718b}.method-grid{display:grid;grid-template-columns:1fr 1fr;gap:25px}.method-grid p{font-size:12px;color:var(--muted);margin:7px 0}.method-grid ul{padding-left:18px;color:var(--muted);font-size:12px}.checks{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.footer{color:var(--muted);font-size:11px;text-align:center;margin-top:30px}.tooltip{position:fixed;z-index:100;pointer-events:none;display:none;background:#1e2d44f5;color:#fff;border-radius:7px;padding:10px 13px;font-size:12px;box-shadow:0 4px 20px #16223825;max-width:310px;line-height:1.8}.tooltip .t-muted{color:#b9c8dd}.toast{position:fixed;bottom:25px;left:50%;transform:translateX(-50%);background:#243950;color:#fff;padding:9px 18px;border-radius:7px;z-index:99;display:none;font-size:12px}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}details{margin-top:12px}summary{cursor:pointer;color:var(--accent);font-size:12px}.empty-cell{fill:#edf0f5}.selected-cell{stroke:#142942;stroke-width:2.3}.heat-cell:hover{stroke:#1b2d48;stroke-width:1.7}.clickable{cursor:pointer}.inline-stat{font-variant-numeric:tabular-nums}
+@media(max-width:1000px){.cards{grid-template-columns:repeat(2,1fr)}.grid2,.method-grid{grid-template-columns:1fr}.filter-note{display:none}.top,main{padding-left:18px;padding-right:18px}.filters{padding:10px 18px;gap:10px}nav{padding-left:18px}.big{font-size:28px}.detail{grid-template-columns:1fr}.topline{align-items:start}}
+@media(max-width:550px){h1{font-size:25px}.cards{gap:8px}.card,.panel{padding:13px}.section-head{align-items:start;flex-direction:column}.filters .control{flex:1}select{max-width:100%;width:100%}.seg button{padding:5px 8px}.topline .pill{display:none}}
+@media print{.filterbar,nav,.actions,.btn,.support{display:none!important}body{background:white}main{padding:0}.panel,.card{break-inside:avoid;box-shadow:none}.top{padding:10px 0}.grid2{grid-template-columns:1fr 1fr}section{margin-bottom:15px}}
+</style>
+</head>
+<body>
+<header><div class="top"><div class="topline"><div class="eyebrow">CoT NAVIGATION / NATURAL ERROR PROBING</div><span class="pill green">8 / 8 完成 · 导航模型冻结</span></div>
+<h1>模型能读出自己已经犯错吗？</h1><p class="subtitle">自然生成 CoT → 自然数据训练探针 → 自然数据主测试。比较局部错误读出、后续记录信号与错误类型敏感性。人工错误仅用于最后的受控测试。</p></div>
+<nav><a href="#overview">结果总览</a><a href="#positions">层 × token 位置</a><a href="#types">错误类型</a><a href="#controls">读出与对照</a><a href="#methods">数据与口径</a><a href="../causal_error_signal/causal_intervention_dashboard.html">因果干预</a></nav></header>
+<div class="filterbar"><div class="filters">
+<div class="control"><label for="dataset">主测试数据</label><select id="dataset"><option value="test">相同自然前缀 · 共享测试</option><option value="own_test">各模型自身生成 · 自身测试</option></select></div>
+<div class="control"><label>探针架构</label><div class="seg" id="architecture"><button data-value="linear" aria-pressed="false">线性</button><button data-value="mlp64" aria-pressed="true">MLP · 64</button></div></div>
+<div class="control"><label for="metric">指标</label><select id="metric"><option value="accuracy">预测准确率 · 阈值 0.5</option><option value="paired_rank">成对排序准确率</option><option value="gap">正负平均概率差</option><option value="brier">Brier 分数 ↓</option><option value="bce">BCE 损失 ↓</option></select></div>
+<div class="control"><label for="layer">读出层</label><select id="layer"><option value="0">L1</option><option value="1">L2</option><option value="2">L3</option><option value="3">L4</option><option value="4">L5</option><option value="5" selected>L6</option></select></div>
+<div class="control"><label>动作记录</label><div class="seg" id="phase"><button data-value="0" aria-pressed="true">首错</button><button data-value="1" aria-pressed="false">后 1 条</button><button data-value="2" aria-pressed="false">后 2 条</button></div></div>
+<div class="filter-note">统计先平均 token 位置，再平均探针与模型 seed。</div>
+</div></div>
+<main>
+<section id="overview"><div class="section-head"><div><h2>相同位置，独立读出</h2><p id="selectionSummary"></p></div><div class="legend"><span><i class="dot" style="background:var(--blue)"></i>匹配干净 baseline</span><span><i class="dot" style="background:var(--orange)"></i>纠错模型</span></div></div>
+<div class="cards"><div class="card"><div class="card-label">匹配干净 baseline</div><div class="big cblue" id="baselineValue">—</div><div class="card-small" id="baselineSub"></div></div><div class="card"><div class="card-label">纠错模型</div><div class="big corange" id="correctionValue">—</div><div class="card-small" id="correctionSub"></div></div><div class="card"><div class="card-label">纠错 − baseline</div><div class="big" id="deltaValue">—</div><div class="card-small" id="deltaSub"></div></div><div class="card"><div class="card-label" id="supportTitle">本记录的可匹配错误查询</div><div class="big" id="queryValue">—</div><div class="card-small" id="querySub"></div></div></div>
+<div class="note" id="datasetNote"></div>
+<div class="grid2" style="margin-top:16px"><div class="panel"><div class="card-head"><h3>信号如何随记录变化</h3><button class="btn" data-export="stageChart">保存 SVG</button></div><div id="stageChart" class="chart"></div><p class="caption">点为有效位置宏平均；误差棒为 4 个导航模型 seed 的标准差，不是置信区间。线连的是不同记录位置的统计。</p></div><div class="panel"><div class="card-head"><h3>逐个模型 seed 比较</h3><button class="btn" data-export="seedChart">保存 SVG</button></div><div id="seedChart" class="chart"></div><p class="caption">每根柱已平均该模型的 2 个探针 seed 和有效 token 位置。未按测试成绩选择最佳模型或最佳层。</p></div></div></section>
+
+<section id="positions"><div class="section-head"><div><h2>每层 × 每个 token 位置</h2><p>悬浮查看数值和最小查询支持；点击单元格切换读出层并固定位置。</p></div><div class="actions"><button class="btn" id="heatMode">显示差值热图</button><button class="btn" data-export="heatmap">保存 SVG</button><button class="btn" id="exportTokens">导出逐 token CSV</button></div></div>
+<div class="panel"><div class="row" style="margin-bottom:12px"><div class="control"><label for="positionAlignment">位置对齐方式</label><select id="positionAlignment"><option value="record">动作记录起点 · 原结果</option><option value="error">首个错误 token · 偏移 0–5</option></select></div><span class="small" id="heatCaption"></span><span class="spacer"></span><label class="support">最小查询支持 <input id="minQueries" type="range" min="8" max="64" step="8" value="8"><span id="minQueriesText">8</span></label></div><div class="note" id="positionNote" style="margin-bottom:15px"></div><div id="heatmap" class="chart"></div><p class="caption">灰格表示没有可用分数或未达到支持阈值；同偏移可能落在不同字段。支持筛选只作用于本模块，不改变上方总体统计。</p>
+<div class="detail"><div id="selectedCell" class="detail-box"></div><div id="positionMethod" class="detail-box muted"></div></div>
+<div class="card-head" style="margin-top:20px"><h3>当前层的逐 token 曲线</h3><button class="btn" data-export="tokenChart">保存 SVG</button></div><div id="tokenChart" class="chart"></div>
+<div id="earlyControls" class="table-wrap"></div>
+<details id="recordCoverageDetails"><summary>记录偏移 0–5：为什么有空格？查看自然正负样本覆盖</summary><p class="caption">首错记录的偏移 0–3 在当前配对自然数据中没有“此前已经出错”的正例，因此不能训练当前目标的二分类探针。偏移 4、5 已训练；后 1／2 条记录的偏移 0–5 也已训练。不能把未来才会出错的前缀标为“已经出错”。下表随上方动作记录切换，数量为独立查询数。</p><div id="earlyRecordCoverage" class="table-wrap"></div></details>
+<details id="errorCoverageDetails"><summary>首错相对偏移 0–5：训练／验证／共享测试覆盖</summary><div id="earlyAlignedCoverage" class="table-wrap"></div></details>
+</div></section>
+
+<section id="types"><div class="section-head"><div><h2>哪些错误更容易读出？</h2><p>自然首错分层是主测试分析；人工错误只用于末尾的受控敏感性分析。</p></div><div class="actions"><div class="seg" id="typeMode"><button data-value="natural" aria-pressed="true">自然错误</button><button data-value="artificial" aria-pressed="false">人工类型控制</button></div><button class="btn" data-export="typeChart">保存 SVG</button></div></div>
+<div class="panel"><div class="note warm" id="typeNote"></div><div id="typeChart" class="chart" style="margin-top:12px"></div><p class="caption">点击类型查看其分记录结果和训练覆盖。NA 表示该分层样本不足或没有对应探针，不表示模型完全无法识错。</p><div id="typeDetails" class="detail-box" style="margin-top:12px"></div></div></section>
+
+<section id="controls"><div class="section-head"><div><h2>读出与对照</h2><p>区分残差信息、当前 token／位置线索，以及是否仅依赖词面历史。</p></div><button class="btn" id="exportAggregates">导出全部层汇总 CSV</button></div>
+<div class="grid2"><div class="panel"><h3>同口径对照</h3><div class="table-wrap" id="controlTable"></div><p class="caption" id="controlCaption"></p></div><div class="panel"><div class="card-head"><h3>正负样本的平均输出概率</h3><button class="btn" data-export="probabilityChart">保存 SVG</button></div><div id="probabilityChart" class="chart"></div><p class="caption">始终展示 sigmoid 概率均值，不受全局指标选择影响。概率对应平衡采样的探针数据，不是自由生成时已校准的真实后验。</p></div></div>
+<details class="panel"><summary>展开当前测试、架构下的全部层与记录数值</summary><div class="table-wrap" id="rawTable" style="margin-top:12px"></div></details></section>
+
+<section id="methods"><div class="section-head"><div><h2>数据与实验口径</h2><p>离线单文件 · 所有交互在浏览器本地完成 · 不上传数据</p></div><button class="btn" id="printPage">打印当前视图</button></div>
+<div class="panel"><div class="method-grid"><div><h3>数据来自哪里</h3><p>导航任务均为可达正样本、普通 N100 新图 DFS。探针负标签指“CoT 前缀仍合法”，不是不可达导航问题。</p><p>两个当前 seed-0 checkpoint 各在 1536 个训练查询、256 个验证查询上自由生成；8 个 checkpoint 各在相同 256 个测试查询上生成。训练／验证／测试分别有 3072／512／2048 条轨迹，独立查询数为 1536／256／256。</p><p>主数据两个分支均为未经编辑的自然前缀：正例此前已经出错；负例截至读出仍合法。配对匹配生成 checkpoint、字段与记录内 token 偏移，优先匹配当前 token，并尽量匹配推理进度。主读出早于任何显式 MISTAKE。</p><div class="table-wrap" id="sampleTable"></div></div>
+<div><h3>探针如何设置</h3><p>读取位置 p 的各层残差 hₚ：已输入 xₚ、尚未生成 xₚ₊₁；标签为截至 p 是否出现过语义错误。每个层和位置独立训练线性或 MLP64，最多 5000 步，只按验证集 BCE 选步；每架构 2 个探针 seed，每组 4 个模型 seed。</p><p>自然文本由原生 BF16 生成；冻结模型用 FP32 重放原样前缀提取 activation，不声称逐位复现 BF16 生成时的隐藏状态。原始图／查询及其全部续写先划分，再进行读出选择。</p><p>自然续写可能继续犯错，后续可读出信号不等于独立的历史错误记忆；能够解码错误也不等于会主动纠错。中层与最后一层可能不同，应同时查看热图。</p><div class="note">固定阈值 0.5：预测概率 ≥0.5 判为“截至当前已出错”，否则判为“仍合法”。准确率 = 判对的读出数 / 总读出数。每个位置的自然已错／合法样本数相等，因此可由已有 TPR／FPR 精确恢复为 (TPR + 1 − FPR) / 2；不重训探针，不按测试成绩调阈值。总体指标沿用位置、探针 seed、模型 seed 的宏平均，不代表自由生成时的真实错误比例。</div></div></div>
+<div class="checks" id="checks"></div><details><summary>自身测试的有效查询覆盖（按模型和记录）</summary><div class="table-wrap" id="coverageTable" style="margin-top:10px"></div></details></div></section>
+<footer class="footer">自然错误训练与自然测试探针 · 2026-10-30 · 原始数值嵌入本文件。图中的相同查询被多个模型重复评估，不视作额外独立图。</footer>
+<div id="live" class="sr" aria-live="polite"></div>
+</main><div id="tooltip" class="tooltip"></div><div id="toast" class="toast"></div>
+<script id="experiment-data" type="application/json">__DASHBOARD_DATA__</script>
+<script>
+'use strict';
+// Data are pre-aggregated scientific results, not reconstructed predictions.
+const D = JSON.parse(document.getElementById('experiment-data').textContent);
+const ARMS = ['matched_clean','correction'];
+const LABEL = {matched_clean:'匹配干净 baseline',correction:'纠错模型'};
+const COLOR = {matched_clean:'#527faf',correction:'#d88035'};
+const PHASE = ['首错所在记录','后续第 1 条记录','后续第 2 条记录'];
+const TYPE = {candidate_nonedge:'非邻接候选',candidate_out_of_graph:'图外候选',candidate_visited:'已访问候选',candidate_omission:'候选遗漏',candidate_duplicate:'候选重复',frontier_wrong_order:'栈顺序错误',frontier_wrong_node:'栈节点错误',visited_omission:'visited 遗漏',visited_out_of_graph:'visited 图外节点',visited_extra:'visited 多余',action_wrong_operator:'错误操作符'};
+const METRIC = {accuracy:{name:'预测准确率（阈值 0.5）',reference:.5,range:[0,1],refName:'平衡样本随机分类'},paired_rank:{name:'成对排序准确率',reference:.5,range:[0,1],refName:'随机排序'},gap:{name:'正负平均概率差',reference:0,range:[-1,1],refName:'正负均值相同'},brier:{name:'Brier 分数',reference:.25,range:[0,.5],lower:true,refName:'常数 0.5 预测'},bce:{name:'BCE 损失',reference:Math.log(2),range:[0,1],lower:true,refName:'常数 0.5 预测'}};
+const $ = id => document.getElementById(id);
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = (x,d=3) => Number.isFinite(x)?x.toFixed(d):'NA';
+const val = (r,key=S.metric) => !r?null:key==='gap'?(r.positive_p==null||r.negative_p==null?null:r.positive_p-r.negative_p):r[key];
+const mean = a => a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+const std = a => a.length>1?Math.sqrt(a.reduce((s,x)=>s+(x-mean(a))**2,0)/(a.length-1)):null;
+const aggIndex = new Map(D.aggregates.map(r=>[[r.arm,r.architecture,r.dataset,r.record,r.head].join('|'),r]));
+const curveIndex = new Map(D.curves.map(r=>[[r.arm,r.architecture,r.dataset,r.record,r.head,r.token_offset].join('|'),r]));
+const get = (arm,head=S.head,phase=S.phase,ds=S.ds,arch=S.arch)=>aggIndex.get([arm,arch,ds,phase,head].join('|'));
+const curve = (arm,head,offset)=>S.align==='error'?earlyRow(arm,head,offset):curveIndex.get([arm,S.arch,S.ds,S.phase,head,offset].join('|'));
+const S={ds:'test',arch:'mlp64',metric:'accuracy',head:5,phase:0,min:8,difference:false,offset:8,early:0,align:'record',typeMode:'natural',type:'candidate_nonedge'};
+const selectedOffset=()=>S.align==='error'?S.early:S.offset;
+const positionLabel=()=>S.align==='error'?'首个错误 token 对齐':PHASE[S.phase]+' · 记录起点对齐';
+function applyHash(){const hash=new URLSearchParams(location.hash.slice(1));
+ if(hash.get('metric')==='auroc')S.metric='accuracy';
+ for(const [k,allowed] of Object.entries({ds:['test','own_test'],arch:['linear','mlp64'],metric:Object.keys(METRIC),align:['record','error']}))if(allowed.includes(hash.get(k)))S[k]=hash.get(k);
+ for(const [k,lo,hi] of [['head',0,5],['phase',0,2],['min',8,64],['offset',0,10000],['early',0,5]])if(hash.has(k)&&Number.isInteger(+hash.get(k))&&+hash.get(k)>=lo&&+hash.get(k)<=hi)S[k]=+hash.get(k);
+ S.min=Math.round(S.min/8)*8;
+}
+applyHash();
+let hoverData = new Map();
+function tip(event,html){const t=$('tooltip');t.innerHTML=html;t.style.display='block';t.style.left=Math.min(event.clientX+14,innerWidth-325)+'px';t.style.top=Math.max(8,Math.min(event.clientY+12,innerHeight-t.offsetHeight-12))+'px';}
+function hideTip(){$('tooltip').style.display='none';}
+function toast(text){$('toast').textContent=text;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',2200);}
+function svgOpen(w,h,label){return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}" style="font-family:Segoe UI,Microsoft YaHei,sans-serif">`;}
+function text(x,y,s,extra=''){const size=extra.match(/font-size="([^"]+)"/)?.[1]??11;extra=extra.replace(/font-size="[^"]*"/g,'');return `<text x="${x}" y="${y}" fill="#64748b" font-size="${size}" ${extra}>${esc(s)}</text>`;}
+function line(x1,y1,x2,y2,color='#e6ebf2',extra=''){return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" ${extra}/>`;}
+function axis(w,h,range,xticks){const p={l:48,r:18,t:25,b:44},iw=w-p.l-p.r,ih=h-p.t-p.b;const y=v=>p.t+(range[1]-v)/(range[1]-range[0])*ih;let s='';for(let i=0;i<=4;i++){const v=range[0]+(range[1]-range[0])*i/4;s+=line(p.l,y(v),w-p.r,y(v))+text(p.l-8,y(v)+4,fmt(v,2),'text-anchor="end"');}for(const x of xticks)s+=text(x.x,h-17,x.label,'text-anchor="middle"');return{p,iw,ih,y,s};}
+function domain(values){const base=METRIC[S.metric].range.slice();if(METRIC[S.metric].lower)base[1]=Math.max(base[1],...values.filter(Number.isFinite).map(v=>v*1.15));return base;}
+function reference(a,w){const m=METRIC[S.metric];return m.reference>=0||S.metric==='gap'?line(a.p.l,a.y(m.reference),w-a.p.r,a.y(m.reference),'#9aa8ba','stroke-dasharray="4 4"')+text(w-a.p.r,a.y(m.reference)-5,m.refName,'text-anchor="end" font-size="9"'):'';}
+function updateHash(){const p=new URLSearchParams();for(const k of ['ds','arch','metric','head','phase','min','offset','early','align'])p.set(k,S[k]);try{history.replaceState(null,'','#'+p);}catch{}}
+window.addEventListener('hashchange',()=>{if(new URLSearchParams(location.hash.slice(1)).has('ds')){applyHash();render();}});
+for(const a of document.querySelectorAll('nav a[href^="#"]'))a.addEventListener('click',e=>{e.preventDefault();document.querySelector(a.getAttribute('href')).scrollIntoView({behavior:'smooth'});updateHash();});
+
+// Aggregate panels keep the published macro-average. Support sliders do not
+// silently recompute these from already averaged token cells.
+function renderOverview(){
+ const b=get(ARMS[0]),c=get(ARMS[1]),bv=val(b),cv=val(c),delta=b&&c?cv-bv:null;
+ $('selectionSummary').textContent=`${S.ds==='test'?'共享自然测试':'各模型自身自然测试'} · ${S.arch==='linear'?'独立线性':'独立 MLP64'} · L${S.head+1} · ${PHASE[S.phase]} · ${METRIC[S.metric].name}`;
+ $('baselineValue').textContent=fmt(bv);$('correctionValue').textContent=fmt(cv);$('deltaValue').textContent=delta==null?'NA':(delta>=0?'+':'')+fmt(delta);
+ const seedValues=r=>(r?.per_model??[]).map(q=>val(q)).filter(Number.isFinite);
+ $('baselineSub').textContent=`模型 seed 标准差 ${fmt(std(seedValues(b)))} · ${b?.models??0} 个模型`;
+ $('correctionSub').textContent=`模型 seed 标准差 ${fmt(std(seedValues(c)))} · ${c?.models??0} 个模型`;
+ const favorable=delta!=null&&(METRIC[S.metric].lower?delta<0:delta>0);$('deltaValue').className='big '+(delta==null?'':favorable?'good':'bad');
+ let wins=0,n=0;for(const r of b?.per_model??[]){const q=c?.per_model?.find(q=>q.model_seed===r.model_seed);if(q){n++;if(METRIC[S.metric].lower?val(q)<val(r):val(q)>val(r))wins++;}}
+ $('deltaSub').textContent=`${wins}/${n} 个匹配 seed 数值改善；${METRIC[S.metric].lower?'该指标越低越好':'该指标越高越好'}`;
+ if(S.ds==='test'){const n=D.audits.readout_verification.shared.test.phases[String(S.phase)].positive_queries;$('queryValue').textContent=n;$('querySub').textContent='独立错误查询；原始测试共 256 个查询';$('supportTitle').textContent='本记录的可匹配错误查询';}
+ else{const counts=Object.values(D.audits.readout_verification.own).map(r=>r.phases[String(S.phase)].positive_queries);$('queryValue').textContent=Math.min(...counts)+'–'+Math.max(...counts);$('querySub').textContent='各 checkpoint 独立匹配，分布和覆盖不同';$('supportTitle').textContent='自身测试有效查询范围';}
+ $('datasetNote').textContent=S.ds==='test'?'共同输入比较：所有冻结模型读取相同的自然前缀，便于比较错误信息的可读出性。每一对自然正负样本匹配生成源、字段和 token 偏移；不修补任何一条文本。':'自身测试：正负前缀均由当前被探测 checkpoint 自由生成。各模型犯错的类型和难度不同，模型间差值需结合共享测试判断。';
+ $('live').textContent=$('selectionSummary').textContent+`，baseline ${fmt(bv)}，纠错模型 ${fmt(cv)}`;
+ renderStage();renderSeeds();
+}
+function renderStage(){const w=600,h=260,x=[85,300,515],rr=ARMS.flatMap(arm=>[0,1,2].map(p=>get(arm,S.head,p))),values=rr.map(r=>val(r));const a=axis(w,h,domain(values),x.map((xx,i)=>({x:xx,label:['首错记录','后 1 条','后 2 条'][i]})));let s=svgOpen(w,h,'按记录比较')+a.s+reference(a,w);
+ for(const arm of ARMS){const rows=[0,1,2].map(p=>get(arm,S.head,p));let points=[];rows.forEach((r,i)=>{const v=val(r);if(!Number.isFinite(v))return;points.push([x[i],a.y(v)]);const sv=std((r?.per_model??[]).map(q=>val(q)).filter(Number.isFinite));if(sv!=null){const y1=a.y(Math.min(domain(values)[1],v+sv)),y2=a.y(Math.max(domain(values)[0],v-sv));s+=line(x[i],y1,x[i],y2,COLOR[arm])+line(x[i]-4,y1,x[i]+4,y1,COLOR[arm])+line(x[i]-4,y2,x[i]+4,y2,COLOR[arm]);}const id=`stage|${arm}|${i}`;hoverData.set(id,{html:`<strong>${LABEL[arm]}</strong><br>${PHASE[i]} · L${S.head+1}<br>${METRIC[S.metric].name}：${fmt(v,4)}<br><span class="t-muted">模型 seed 标准差 ${fmt(sv,4)}</span>`});s+=`<circle cx="${x[i]}" cy="${a.y(v)}" r="5" fill="${COLOR[arm]}" data-hover="${id}"/>`+text(x[i],a.y(v)+(arm==='correction'?-13:22),fmt(v),'text-anchor="middle"');});if(points.length)s+=`<polyline points="${points.map(p=>p.join(',')).join(' ')}" fill="none" stroke="${COLOR[arm]}" stroke-width="2"/>`;}
+ $('stageChart').innerHTML=s+'</svg>';
+}
+function renderSeeds(){const w=600,h=260,x=[112,234,356,478],rr=ARMS.map(a=>get(a));const vs=rr.flatMap(r=>(r?.per_model??[]).map(q=>val(q)));const a=axis(w,h,domain(vs),x.map((xx,i)=>({x:xx,label:'seed '+i})));let s=svgOpen(w,h,'导航模型 seed 对比')+a.s+reference(a,w);for(let j=0;j<2;j++)for(let seed=0;seed<4;seed++){const r=rr[j]?.per_model?.find(q=>q.model_seed===seed),v=val(r);if(!Number.isFinite(v))continue;const xx=x[seed]+(j-.5)*29,base=a.y(0);const yy=a.y(v),height=Math.abs(base-yy);s+=`<rect x="${xx-12}" y="${Math.min(base,yy)}" width="24" height="${height}" rx="2" fill="${COLOR[ARMS[j]]}"/>`+text(xx,yy-7,fmt(v),'text-anchor="middle" font-size="10"');}$('seedChart').innerHTML=s+'</svg>';}
+
+// The heatmaps expose missing support rather than interpolating empty cells.
+function rgb(t){const stops=[[.0,[73,40,119]],[.25,[55,91,139]],[.5,[39,144,140]],[.75,[104,193,113]],[1,[244,222,62]]];t=Math.max(0,Math.min(1,t));let j=0;while(j<stops.length-2&&t>stops[j+1][0])j++;const [a,c]=stops[j],[b,d]=stops[j+1],u=(t-a)/(b-a);return`rgb(${c.map((v,i)=>Math.round(v+(d[i]-v)*u)).join(',')})`;}
+function diffColor(v,max){const t=Math.min(1,Math.abs(v)/max),end=v<0?[71,121,178]:[219,126,51];return`rgb(${end.map(n=>Math.round(245+(n-245)*t)).join(',')})`;}
+function currentCurves(){return (S.align==='error'?D.early_offsets?.curves??[]:D.curves).filter(r=>r.dataset===S.ds&&r.architecture===S.arch&&(S.align==='error'||r.record===S.phase)&&r.head<6);}
+function visible(r){return r&&r.min_queries>=S.min&&Number.isFinite(val(r));}
+function renderHeatmap(){const rows=currentCurves(),maxOffset=rows.length?Math.max(...rows.map(r=>r.token_offset)):0;const cols=maxOffset+1;let w=1050,h=S.difference?285:295,left=42,top=42,cw=(S.difference?950:465)/cols,ch=S.difference?24:25;let s=svgOpen(w,h,'逐层逐token热图');const metrics=rows.filter(visible).map(r=>val(r));const lo=METRIC[S.metric].range[0],hi=METRIC[S.metric].lower?Math.max(METRIC[S.metric].range[1],...metrics):METRIC[S.metric].range[1];
+ const colorLabel=S.difference?'纠错 − baseline（原始数值差，不自动表示改善）':`${METRIC[S.metric].name} · ${METRIC[S.metric].lower?'较低更好':'较高更好'}`;
+ $('heatCaption').textContent=`${positionLabel()} · ${S.arch==='linear'?'线性':'MLP64'} · ${colorLabel}`;
+ const panels=S.difference?['difference']:ARMS;
+ panels.forEach((arm,j)=>{const origin=left+j*525;s+=text(origin,20,arm==='difference'?'差值热图':LABEL[arm],'font-size="13" font-weight="600"');for(let head=0;head<6;head++){const yy=top+(5-head)*ch;s+=text(origin-9,yy+ch*.68,'L'+(head+1),'text-anchor="end"');for(let offset=0;offset<cols;offset++){const b=curve('matched_clean',head,offset),c=curve('correction',head,offset),r=arm==='difference'?null:curve(arm,head,offset);const ok=arm==='difference'?visible(b)&&visible(c):visible(r);const v=ok?(arm==='difference'?val(c)-val(b):val(r)):null;const fill=!ok?'#edf0f5':arm==='difference'?diffColor(v,S.metric==='bce'?.6:.3):rgb((v-lo)/(hi-lo||1));const key=`heat|${arm}|${head}|${offset}`;hoverData.set(key,{html:ok?`<strong>${arm==='difference'?'纠错 − baseline':LABEL[arm]}</strong><br>L${head+1} · 偏移 ${offset}<br>${METRIC[S.metric].name}：${fmt(v,4)}<br><span class="t-muted">最小查询支持 ${arm==='difference'?Math.min(b.min_queries,c.min_queries):r.min_queries}<br>点击固定该位置</span>`:`L${head+1} · 偏移 ${offset}<br>没有分数或查询支持不足`,head,offset});s+=`<rect x="${origin+offset*cw}" y="${yy}" width="${Math.max(.5,cw-.5)}" height="${ch-.5}" fill="${fill}" class="heat-cell clickable ${head===S.head&&offset===selectedOffset()?'selected-cell':''}" data-hover="${key}"/>`;if(cols<=6&&v!=null)s+=text(origin+(offset+.5)*cw,yy+ch*.68,fmt(v,2),'text-anchor="middle" style="fill:#18263d" pointer-events="none"');}}for(let offset=0;offset<cols;offset+=S.align==='error'?1:5)s+=text(origin+(offset+.5)*cw,top+6*ch+18,offset,'text-anchor="middle"');s+=text(origin+cw*cols/2,top+6*ch+36,S.align==='error'?'距首个错误 token 的偏移（0–5）':'记录内 token 偏移（从 0 起）','text-anchor="middle"');});
+ const bx=left,by=h-18,bw=190;for(let i=0;i<60;i++){const t=i/59;s+=`<rect x="${bx+i*bw/60}" y="${by-8}" width="${bw/60+1}" height="9" fill="${S.difference?diffColor((t-.5)*.6,.3):rgb(t)}"/>`;}s+=text(bx+bw+12,by,S.difference?'蓝：负差值 / 橙：正差值':`${fmt(lo,2)} → ${fmt(hi,2)}`);$('heatmap').innerHTML=s+'</svg>';
+ renderCell();renderTokenCurve();
+}
+function renderCell(){
+ const offset=selectedOffset();
+ let s=`<strong>固定位置：L${S.head+1} · ${positionLabel()} · 偏移 ${offset}</strong><br>`;
+ for(const arm of ARMS){
+  const r=curve(arm,S.head,offset);
+  s+=`${LABEL[arm]}：${visible(r)?fmt(val(r),4):'NA'} <span class="muted">（配对查询支持 ${r?.min_queries??0}${r?.min_positive_queries!=null?'；已错查询 ≥'+r.min_positive_queries:''}）</span><br>`;
+ }
+ if(S.align==='record'&&S.phase===0&&offset<4)s+='<span class="muted">此记录偏移没有自然“已经出错”正例，可切换为首个错误 token 对齐。</span>';
+ $('selectedCell').innerHTML=s;
+}
+
+function renderTokenCurve(){
+ const rows=currentCurves().filter(r=>r.head===S.head),max=rows.length?Math.max(...rows.map(r=>r.token_offset)):1,w=1050,h=255;
+ const vs=rows.filter(visible).map(r=>val(r)),ticks=[];
+ for(let i=0;i<=max;i+=S.align==='error'?1:5)ticks.push({x:52+(w-80)*i/(max||1),label:S.align==='error'?'首错 +'+i:i});
+ const range=domain(vs),a=axis(w,h,range,ticks);let s=svgOpen(w,h,'逐token曲线')+a.s+reference(a,w);
+ for(const arm of ARMS){
+  let points=[];
+  const flush=()=>{if(points.length)s+=`<polyline points="${points.join(' ')}" fill="none" stroke="${COLOR[arm]}" stroke-width="2"/>`;points=[];};
+  for(let offset=0;offset<=max;offset++){
+   const r=curve(arm,S.head,offset);if(!visible(r)){flush();continue;}
+   const v=val(r),xx=52+(w-80)*offset/(max||1),yy=a.y(v);points.push(`${xx},${yy}`);
+   const sd=std((r.per_model??[]).map(q=>val(q)).filter(Number.isFinite));
+   if(sd!=null){const y1=a.y(Math.min(range[1],v+sd)),y2=a.y(Math.max(range[0],v-sd));s+=line(xx,y1,xx,y2,COLOR[arm])+line(xx-4,y1,xx+4,y1,COLOR[arm])+line(xx-4,y2,xx+4,y2,COLOR[arm]);}
+   const key=`token|${arm}|${offset}`;
+   hoverData.set(key,{html:`<strong>${LABEL[arm]}</strong><br>L${S.head+1} · ${positionLabel()} · 偏移 ${offset}<br>${METRIC[S.metric].name} ${fmt(v,4)}<br>最小查询支持 ${r.min_queries}`,head:S.head,offset});
+   s+=`<circle cx="${xx}" cy="${yy}" r="3.3" fill="${COLOR[arm]}" data-hover="${key}" class="clickable"/>`;
+  }
+  flush();
+ }
+ const selected=selectedOffset();
+ if(selected<=max)s+=line(52+(w-80)*selected/(max||1),a.p.t,52+(w-80)*selected/(max||1),h-a.p.b,'#91a6c5','stroke-dasharray="3 4"');
+ $('tokenChart').innerHTML=s+'</svg>';
+}
+
+
+// Additional error-relative probes never replace the published record alignment.
+const earlyIndex=new Map((D.early_offsets?.curves??[]).map(r=>[[r.arm,r.architecture,r.dataset,r.head,r.token_offset].join('|'),r]));
+const earlyRow=(arm,head,offset,ds=S.ds)=>earlyIndex.get([arm,S.arch,ds,head,offset].join('|'));
+function renderEarlyCoverage(id,coverage,phase){
+ let s='<table><thead><tr><th>偏移</th><th class="num">训练：已错 / 合法</th><th class="num">验证：已错 / 合法</th><th class="num">共享测试：已错 / 合法</th></tr></thead><tbody>';
+ for(let o=0;o<6;o++){
+  s+=`<tr><td>${o}</td>`;
+  for(const split of ['train','val','test']){
+   const r=coverage?.[split]?.find(r=>r.phase===phase&&r.offset===o);
+   s+=`<td class="num">${r?`${r.positive_queries} / ${r.negative_queries}`:'NA'}</td>`;
+  }
+  s+='</tr>';
+ }
+ $(id).innerHTML=s+'</tbody></table>';
+}
+function renderPositionExtras(){
+ const E=D.early_offsets,isError=S.align==='error';
+ $('positionAlignment').value=S.align;
+ $('positionAlignment').querySelector('option[value="error"]').disabled=!E;
+ $('recordCoverageDetails').hidden=isError;
+ $('errorCoverageDetails').hidden=!isError;
+ $('earlyControls').hidden=!isError;
+ $('positionNote').textContent=isError
+  ?'偏移 0 为刚读入首个错误 token、尚未生成下一个 token 的状态；偏移 1–5 可跨动作记录。训练／验证／测试均为原自然数据，负例匹配生成源、字段与实际记录偏移。“动作记录”只影响本模块外的原结果，不改变本视图。'
+  :'偏移从所选动作记录起点计数；上方可切换首错记录及后 1／2 条记录。也可切换为“首个错误 token”对齐，观察首错后的偏移 0–5。两种对齐使用各自独立训练的探针，目标均为“截至当前是否已经语义出错”。';
+ $('positionMethod').textContent=isError
+  ?'每层 × 首错相对偏移独立训练，验证 BCE 选步。曲线误差棒为 4 个模型 seed 的标准差，不是置信区间。不同偏移的自然轨迹覆盖可能因 MISTAKE 截断而不同；偏移 0 已消费错误 token。'
+  :'每层 × 记录 × token 偏移的参数、标准化与验证选步均独立。原逐位置结果未保存模型 seed 方差，曲线不显示误差棒；可用查询与自身测试模型覆盖可能随位置变化。';
+ if(!E)return;
+ renderEarlyCoverage('earlyRecordCoverage',E.record_coverage,S.phase);
+ renderEarlyCoverage('earlyAlignedCoverage',E.aligned_coverage,0);
+ if(!isError)return;
+ let table='<table><thead><tr><th>所选层／偏移的对照</th><th class="num">baseline</th><th class="num">纠错</th></tr></thead><tbody>';
+ for(const q of [{name:'残差探针',head:S.head},{name:'当前 token + 位置／字段',head:6},{name:'历史 CoT embedding 均值',head:7},{name:'严格同 token 自然子集',head:S.head,ds:'exact_token_test'},{name:'查询／事件级随机翻转（MLP）',head:S.head,ds:'shuffle_control'}]){
+  const missing=(q.ds&&S.ds!=='test')||(q.ds==='shuffle_control'&&S.arch!=='mlp64');
+  table+=`<tr><td>${q.name}</td>${ARMS.map(arm=>{const r=earlyRow(arm,q.head,S.early,q.ds??S.ds);return `<td class="num">${missing?'—':visible(r)?fmt(val(r),4):'NA'}</td>`;}).join('')}</tr>`;
+ }
+ $('earlyControls').innerHTML=table+'</tbody></table>';
+}
+
+function typeKeys(){return S.typeMode==='artificial'?Object.keys(D.artificial_counts).sort():Object.keys(D.shared_sampling.test.first_types).sort();}
+function renderTypes(){const keys=typeKeys(),prefix=S.typeMode==='artificial'?'artificial/':'natural_type/';if(!keys.includes(S.type))S.type=keys[0];$('typeNote').textContent=S.typeMode==='artificial'?'末尾受控测试：7 类错误各使用相同的 64 个原始查询、相同参考记录，仅修改对应字段。没有人工错误参与探针训练、验证或选步。栈／visited 首错在自然训练中极少，低分也可能反映训练覆盖不足。':'自然主测试的首错类型分层。稀少类型可能无法满足每个位置的测试支持；该分层目前仅对共享自然测试提供，切换上方自身测试时这里仍显示共同基准。';const w=1050,h=keys.length*51+65,p={l:150,r:120,t:25,b:30},rr=keys.flatMap(k=>ARMS.map(a=>get(a,S.head,S.phase,prefix+k))),range=domain(rr.map(r=>val(r))),iw=w-p.l-p.r,x=v=>p.l+(v-range[0])/(range[1]-range[0])*iw;let s=svgOpen(w,h,'错误类型比较');for(let i=0;i<=4;i++){const v=range[0]+(range[1]-range[0])*i/4;s+=line(x(v),10,x(v),h-35)+text(x(v),h-12,fmt(v,2),'text-anchor="middle"');}s+=line(x(METRIC[S.metric].reference),10,x(METRIC[S.metric].reference),h-35,'#93a4bb','stroke-dasharray="4 4"');keys.forEach((kind,i)=>{const yy=p.t+i*51;s+=`<rect x="0" y="${yy-17}" width="${w}" height="48" fill="${S.type===kind?'#f1f5fc':'transparent'}" data-type="${kind}" class="clickable"/>`+text(p.l-12,yy+6,TYPE[kind]??kind,'text-anchor="end"');const n=S.typeMode==='artificial'?D.artificial_counts[kind]:(D.shared_sampling.test.first_types[kind]??0);s+=text(w-p.r+20,yy+7,`${n} 个查询`);for(let j=0;j<2;j++){const arm=ARMS[j],r=get(arm,S.head,S.phase,prefix+kind),v=val(r),by=yy-12+j*17;if(!Number.isFinite(v)){if(j===0)s+=text(p.l+6,by+15,'NA · 样本不足或未提供此位置');continue;}const base=x(Math.max(0,range[0])),xx=x(v);const key=`type|${arm}|${kind}`;hoverData.set(key,{html:`<strong>${TYPE[kind]??kind}</strong><br>${LABEL[arm]} · L${S.head+1}<br>${PHASE[S.phase]}：${fmt(v,4)}<br><span class="t-muted">${n} 个原始查询；有效token位置可能更少</span>`});s+=`<rect x="${Math.min(base,xx)}" y="${by}" width="${Math.abs(xx-base)}" height="12" rx="2" fill="${COLOR[arm]}" data-hover="${key}" data-type="${kind}" class="clickable"/>`+text(xx+6,by+11,fmt(v),'font-size="10"');}});$('typeChart').innerHTML=s+'</svg>';renderTypeDetail();}
+function renderTypeDetail(){const k=S.type,prefix=S.typeMode==='artificial'?'artificial/':'natural_type/',train=D.shared_sampling.train.first_types[k]??0,native=D.shared_sampling.test.first_types[k]??0;let s=`<strong>${esc(TYPE[k]??k)}</strong>　<span class="badge">自然训练首错 ${train} 个查询</span>　<span class="badge">自然主测试首错 ${native} 个查询</span><br>`;if(train<8)s+='<span class="bad">自然训练覆盖稀少：此类型的低分不能直接归结为模型不编码该错误。</span><br>';s+=`<span class="muted">当前 L${S.head+1} / ${S.arch==='linear'?'线性':'MLP64'} / ${METRIC[S.metric].name}：</span>`;for(let p=0;p<3;p++){const b=get(ARMS[0],S.head,p,prefix+k),c=get(ARMS[1],S.head,p,prefix+k);s+=`<span style="margin-right:14px">${PHASE[p]} <span class="cblue">${fmt(val(b))}</span> → <span class="corange">${fmt(val(c))}</span></span>`;}$('typeDetails').innerHTML=s;}
+
+function renderControls(){const specs=[{name:`L${S.head+1} 残差探针`,head:S.head,ds:S.ds},{name:'当前 token + 位置／字段',head:6,ds:S.ds},{name:'历史 CoT embedding 均值',head:7,ds:S.ds},{name:'严格匹配当前 token 的自然子集',head:S.head,ds:'exact_token_test',shared:true},{name:'查询／事件级标签随机翻转',head:S.head,ds:'shuffle_control',shared:true,mlp:true}];let s='<table><thead><tr><th>读出 / 测试</th><th class="num">baseline</th><th class="num">纠错</th></tr></thead><tbody>';for(const q of specs){const missing=(q.shared&&S.ds!=='test')||(q.mlp&&S.arch!=='mlp64');s+=`<tr><td>${esc(q.name)}</td>${ARMS.map(a=>`<td class="num">${missing?'—':fmt(val(get(a,q.head,S.phase,q.ds)),4)}</td>`).join('')}</tr>`;}s+='</tbody></table>';$('controlTable').innerHTML=s;$('controlCaption').textContent='严格匹配子集与随机标签对照仅提供共享测试；随机标签仅训练了 MLP。横线表示未提供该对照，不补填或借用其他数据。';renderProbabilities();renderRaw();}
+function renderProbabilities(){const w=600,h=250,x=[120,310,500],gaps=ARMS.map(arm=>val(get(arm),'gap')).filter(Number.isFinite),a=axis(w,h,[Math.min(0,...gaps)*1.15,1],x.map((xx,i)=>({x:xx,label:['错误前缀','合法前缀','均值之差'][i]})));let s=svgOpen(w,h,'正负样本概率')+a.s+line(a.p.l,a.y(.5),w-a.p.r,a.y(.5),'#a0adbd','stroke-dasharray="4 4"');ARMS.forEach((arm,j)=>{const r=get(arm),values=r?[r.positive_p,r.negative_p,r.positive_p-r.negative_p]:[];values.forEach((v,i)=>{const xx=x[i]+(j-.5)*34,base=a.y(0),yy=a.y(v);s+=`<rect x="${xx-14}" y="${Math.min(base,yy)}" width="28" height="${Math.abs(base-yy)}" rx="2" fill="${COLOR[arm]}"/>`+text(xx,yy-7,fmt(v),'text-anchor="middle"');});});$('probabilityChart').innerHTML=s+'</svg>';}
+function renderRaw(){let s='<table><thead><tr><th>模型组</th><th>记录</th><th>层</th><th class="num">预测准确率 · 阈值 0.5</th><th class="num">成对排序</th><th class="num">错误 P</th><th class="num">合法 P</th><th class="num">Brier</th><th class="num">BCE</th></tr></thead><tbody>';for(let p=0;p<3;p++)for(let h=0;h<6;h++)for(const arm of ARMS){const r=get(arm,h,p);if(!r)continue;s+=`<tr><td>${LABEL[arm]}</td><td>${PHASE[p]}</td><td>L${h+1}</td>${['accuracy','paired_rank','positive_p','negative_p','brier','bce'].map(k=>`<td class="num">${fmt(r[k],4)}</td>`).join('')}</tr>`;}$('rawTable').innerHTML=s+'</tbody></table>';}
+function renderMethods(){let s='<table><thead><tr><th>划分</th><th class="num">错误查询</th><th class="num">匹配读出对</th><th class="num">同 token 比例</th></tr></thead><tbody>';for(const [split,label] of [['train','训练'],['val','验证'],['test','共享测试']]){const r=D.shared_sampling[split];s+=`<tr><td>${label}</td><td class="num">${r.positive_queries}</td><td class="num">${r.pairs.toLocaleString()}</td><td class="num">${(r.exact_token_fraction*100).toFixed(1)}%</td></tr>`;}$('sampleTable').innerHTML=s+'</tbody></table>';
+ const audit=D.audits.verification;$('checks').innerHTML=[`${audit.counts.exact_independent_agreement} / ${audit.counts.prefixes} 首错独立审计一致`,'全部自然读出配对检查通过','图 / 查询划分无交叉','导航 checkpoint 未改变','主数据无参考续写拼接'].map(t=>`<span class="pill green">✓ ${t}</span>`).join('');
+ s='<table><thead><tr><th>生成 checkpoint</th>'+PHASE.map(p=>`<th class="num">${p}查询</th>`).join('')+'</tr></thead><tbody>';for(const [source,r] of Object.entries(D.audits.readout_verification.own).sort()){s+=`<tr><td>${esc(source)}</td>${[0,1,2].map(p=>`<td class="num">${r.phases[String(p)].positive_queries}</td>`).join('')}</tr>`;}$('coverageTable').innerHTML=s+'</tbody></table>';}
+function syncControls(){$('dataset').value=S.ds;$('metric').value=S.metric;$('layer').value=S.head;$('minQueries').value=S.min;$('minQueriesText').textContent=S.min;for(const [id,key] of [['architecture','arch'],['phase','phase'],['typeMode','typeMode']])for(const b of $(id).querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.value===String(S[key])));$('heatMode').textContent=S.difference?'显示并排热图':'显示差值热图';}
+function render(){hoverData=new Map();syncControls();renderOverview();renderHeatmap();renderPositionExtras();renderTypes();renderControls();updateHash();}
+
+// Export the visible data, keeping the metric and population explicit.
+function download(name,content,type){const url=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function csv(rows){if(!rows.length){toast('当前筛选没有可导出的数据');return;}const keys=Object.keys(rows[0]),quote=v=>'"'+String(v??'').replace(/"/g,'""')+'"';return '\ufeff'+[keys.map(quote).join(','),...rows.map(r=>keys.map(k=>quote(r[k])).join(','))].join('\r\n');}
+function csvDownload(name,rows){const s=csv(rows);if(s){download(name,s,'text/csv;charset=utf-8');toast('CSV 已导出');}}
+document.addEventListener('change',e=>{if(e.target.id==='dataset')S.ds=e.target.value;else if(e.target.id==='metric')S.metric=e.target.value;else if(e.target.id==='layer')S.head=+e.target.value;else if(e.target.id==='positionAlignment')S.align=e.target.value;else return;render();});
+for(const [id,key] of [['architecture','arch'],['phase','phase'],['typeMode','typeMode']])$(id).addEventListener('click',e=>{const b=e.target.closest('button[data-value]');if(!b)return;S[key]=key==='phase'?+b.dataset.value:b.dataset.value;render();});
+$('minQueries').addEventListener('input',e=>{S.min=+e.target.value;render();});$('heatMode').addEventListener('click',()=>{S.difference=!S.difference;render();});
+document.addEventListener('pointermove',e=>{const t=e.target.closest('[data-hover]');if(t&&hoverData.has(t.dataset.hover))tip(e,hoverData.get(t.dataset.hover).html);else hideTip();});document.addEventListener('pointerleave',hideTip);window.addEventListener('scroll',hideTip,{passive:true});
+function exportSvg(target){const svg=$(target).querySelector('svg');if(!svg)return;const copy=svg.cloneNode(true),box=svg.viewBox.baseVal;copy.setAttribute('viewBox',`0 0 ${box.width} ${box.height+58}`);
+ const population=target==='typeChart'?(S.typeMode==='artificial'?'人工类型控制（仅测试）':'共享自然测试 · 自然首错类型分层'):(S.ds==='test'?'共享自然测试':'自身自然测试');
+ const legend=target==='heatmap'&&S.difference?text(35,box.height+44,'差值：纠错 − baseline；蓝色为负差值，橙色为正差值'):`<circle cx="38" cy="${box.height+40}" r="4" fill="${COLOR.matched_clean}"/>`+text(49,box.height+44,LABEL.matched_clean)+`<circle cx="228" cy="${box.height+40}" r="4" fill="${COLOR.correction}"/>`+text(239,box.height+44,LABEL.correction);
+ const alignment=['heatmap','tokenChart'].includes(target)?positionLabel():PHASE[S.phase];
+ copy.insertAdjacentHTML('beforeend',text(35,box.height+20,`${population} · ${S.arch} · L${S.head+1} · ${alignment} · ${METRIC[S.metric].name}`)+legend);
+ download(`natural_probe_${target}_${S.ds}_${S.arch}_L${S.head+1}_${['heatmap','tokenChart'].includes(target)?S.align:'record'}_r${S.phase}.svg`,new XMLSerializer().serializeToString(copy),'image/svg+xml;charset=utf-8');
+}
+document.addEventListener('click',e=>{const t=e.target.closest('[data-hover]');if(t){const r=hoverData.get(t.dataset.hover);if(r?.offset!=null){S.head=r.head;if(S.align==='error')S.early=r.offset;else S.offset=r.offset;render();}}const k=e.target.closest('[data-type]');if(k){S.type=k.dataset.type;renderTypes();}const button=e.target.closest('[data-export]');if(button)exportSvg(button.dataset.export);});
+$('exportTokens').addEventListener('click',()=>csvDownload(`natural_probe_tokens_${S.ds}_${S.arch}_L${S.head+1}_${S.align}.csv`,currentCurves().filter(r=>r.head===S.head&&visible(r)).map(r=>({alignment:S.align==='error'?'first_error_token':'record_start',population:r.dataset,architecture:r.architecture,arm:r.arm,record:S.align==='error'?'':r.record,layer:r.head+1,token_offset:r.token_offset,min_queries:r.min_queries,positive_queries_min:r.min_positive_queries??'',threshold:0.5,accuracy:r.accuracy,paired_rank:r.paired_rank,positive_probability:r.positive_p,negative_probability:r.negative_p,brier:r.brier,bce:r.bce}))));
+
+$('exportAggregates').addEventListener('click',()=>csvDownload(`natural_probe_summary_${S.ds}_${S.arch}.csv`,D.aggregates.filter(r=>r.dataset===S.ds&&r.architecture===S.arch).map(r=>({population:r.dataset,architecture:r.architecture,arm:r.arm,record:r.record,layer_or_control:r.head<6?'L'+(r.head+1):r.head===6?'token_position_control':'history_bag_control',threshold:0.5,accuracy:r.accuracy,paired_rank:r.paired_rank,positive_probability:r.positive_p,negative_probability:r.negative_p,brier:r.brier,bce:r.bce,models:r.models}))));
+$('printPage').addEventListener('click',()=>window.print());
+renderMethods();render();
+// Minimal read-only state for reproducible browser QA; no data transmission.
+window.dashboardState=()=>({...S,aggregates:D.aggregates.length,curves:D.curves.length});
+</script>
+</body></html>

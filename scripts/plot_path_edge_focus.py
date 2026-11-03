@@ -25,7 +25,7 @@ import plot_dfs_cot_attention as base  # noqa: E402
 import plot_path_dag_attention as pathfig  # noqa: E402
 
 OUT = ROOT / "figures/hard_dag_v1/path_edge_focus.png"
-JSON = ROOT / "research/block_membership_probe_20261021/path_edge_focus.json"
+JSON = ROOT / "studies/block_membership_probe/path_edge_focus.json"
 DEVICE = "cuda:3"
 SERIES = (
     ("Edge being traversed", "gold", "#D55E00"),

@@ -71,14 +71,15 @@ class AnalysisModel:
         self.protocol = self.cfg.protocol.name
         self.filler = self.cfg.protocol.filler_tokens or self.cfg.data.n_nodes
         self.model = build_model(self.cfg.model, len(self.tok), self.tok.pad).to(device).eval()
-        checkpoint = self.run / "checkpoints/best.pt"
+        checkpoint = self.run / "checkpoints" / entry.get("checkpoint_name", "best.pt")
         state = torch.load(checkpoint, map_location="cpu", weights_only=False)
         self.model.load_state_dict(state["model"], strict=True)
         self.model.requires_grad_(False)
         self.device = torch.device(device)
         self.layers = list(range(max(0, self.model.n_layers - 3), self.model.n_layers))
         self.checkpoint = {"sha256": sha256(checkpoint), "step": int(state["step"]),
-                           "best_score": float(state["best_score"])}
+                           "best_score": float(state.get("best_score",0))}
+        if "checkpoint_step" in entry:assert self.checkpoint["step"]==entry["checkpoint_step"]
         del state
         self.context = self.cfg.data.knowledge == "context_graph"
         data_root = root / self.cfg.data.root

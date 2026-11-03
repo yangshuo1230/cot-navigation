@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
-import train_first_round as engine
+from cot_navigation.experiments import scheduler as engine
 from cot_navigation.config import load_config
 
 LADDER = (4, 6, 8, 10)
@@ -96,6 +96,9 @@ def parse_args(argv=None):
         "tracking.tags",
     }
     owned |= {'train.world_roots', 'train.scale_walk_weights', 'protocol.trajectory_variants', 'runtime.cuda_device'}
+    owned -= {'train.eval_interval', 'train.free_eval_interval', 'train.save_interval',
+              'train.eval_samples', 'train.free_gen_samples', 'evaluation.test_samples',
+              'evaluation.trace_diagnostics', 'evaluation.extra_sets'}
     for item in args.set:
         if "=" not in item or item.split("=", 1)[0] in owned or item.split("=", 1)[0].startswith("data.shapes."):
             parser.error(f"runner owns this option or invalid override: {item}")
@@ -237,19 +240,19 @@ def extra_sets(setting, main, args=None, transfer=False):
 def build_jobs(args, root=ROOT):
     output = Path(args.output_root)
     output = (output if output.is_absolute() else root / output) / args.run_name
-    shared = args.set + [f'model.compile={str(args.compile).lower()}',
+    shared = [f'model.compile={str(args.compile).lower()}',
         f'tracking.mode={args.tracking}', f'train.model_seed={args.model_seed}',
         'runtime.device=cuda', 'runtime.cuda_device=0', 'runtime.smoke=false',
         'train.persist_outputs=true', 'protocol.cot_margin=8',
         f'protocol.trajectory_variants={args.variants}', 'evaluation.trace_diagnostics=false',
-        'evaluation.test_samples=256', 'train.eval_interval=5000', 'train.save_interval=5000',
+        'evaluation.test_samples=256', 'train.eval_interval=20000', 'train.free_eval_interval=20000', 'train.save_interval=10000',
         'train.eval_samples=128', 'train.free_gen_samples=16',
         f'tracking.group={json.dumps(args.run_name)}', 'tracking.tags=["scale_v1"]']
     jobs = []
 
     def add(name, preset, steps, extra, parent=None):
         out = output / name
-        overrides = shared + extra + [f'train.max_steps={steps}',
+        overrides = shared + extra + args.set + [f'train.max_steps={steps}',
             f'output_dir={json.dumps(str(out))}', f'tracking.name={json.dumps(args.run_name + "/" + name)}']
         path = root / 'configs/experiments' / f'{preset}.yaml'
         cfg = load_config([path], overrides)
@@ -266,7 +269,7 @@ def build_jobs(args, root=ROOT):
             roots = roots_for(args, setting, shapes)
             weights = mix_weights(len(roots), len(roots)-1)
             mixture = [f'train.scale_roots={json.dumps(roots)}',
-                       f'evaluation.extra_sets={json.dumps(extra_sets(setting, size, args))}']
+                       'evaluation.extra_sets=[]']
             if curriculum:
                 ends = [50000, 100000, 150000, 200000]
                 mixture += [f'train.scale_stage_ends={json.dumps(ends)}',
@@ -313,7 +316,7 @@ def build_jobs(args, root=ROOT):
             add(f'fixed/knowledge_transfer/stage_b/{protocol}', 'retrain_stage_b', static_steps(10),
                 geometry + worlds + [f'train.scale_weights={_json_weights(query_weights)}',
                 f'train.scale_walk_weights={_json_weights(knowledge)}',
-                f'evaluation.extra_sets={json.dumps(extra_sets("fixed", 10, args, transfer=True))}',
+                'evaluation.extra_sets=[]',
                 'train.fixed_query_pool=full', 'train.balance_query_labels=true', 'train.one_hop_fraction=0.25',
                 f'protocol.name={protocol}', f'tracking.variant=knowledge-transfer-{protocol}', *flags], parent)
     return output, jobs

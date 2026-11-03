@@ -6,8 +6,9 @@ data:
   include_one_hop_queries: true
 train:
   max_steps: 50000
-  eval_interval: 5000
-  save_interval: 5000
+  eval_interval: 20000
+  free_eval_interval: 20000
+  save_interval: 10000
   eval_samples: 0  # entire held-out val pool, not just its downsample
   free_gen_samples: 256  # exceeds these worlds' full val sizes
   fixed_query_pool: full
@@ -17,7 +18,7 @@ evaluation:
   batch_size: 16
   fixed_query_view: full
   selection_metric: balanced_accuracy
-  test_samples: 0
-  final_checkpoints: [best, last]
+  test_samples: 256
+  final_checkpoints: [last]
 tracking:
   tags: [retrain_v3, one_hop, query_coverage]

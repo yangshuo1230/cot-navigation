@@ -24,7 +24,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 sys.path.insert(0, str(ROOT / 'scripts'))
-import train_first_round as engine
+from cot_navigation.experiments import scheduler as engine
 from cot_navigation.config import load_config, to_plain
 
 
@@ -33,12 +33,21 @@ def arguments(argv):
     p.add_argument('--run-name', default='dual_attention_v1_s0_' + datetime.now().strftime('%Y%m%d_%H%M'))
     p.add_argument('--output-root', default='outputs/dual_attention_v1/launches')
     p.add_argument('--gpus', type=int, nargs='+', default=list(range(8)))
+    p.add_argument('--set', action='append', default=[], metavar='KEY=VALUE',
+                   help='Typed config override for new trials; resume uses saved settings')
     p.add_argument('--tracking', choices=('online', 'offline', 'disabled'), default='online')
     p.add_argument('--background', action='store_true')
     p.add_argument('--resume', action='store_true')
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--wait', action=argparse.BooleanOptionalAction, default=True)
     args = p.parse_args(argv)
+    owned = {'output_dir', 'model.architecture', 'model.heads', 'model.attention_order',
+             'model.graph_attention', 'model.graph_max_tokens', 'tracking.group', 'tracking.name'}
+    for item in args.set:
+        if '=' not in item or item.split('=', 1)[0] in owned:
+            p.error(f'runner owns this option or invalid override: {item}')
+    if args.resume and args.set:
+        p.error('--resume preserves saved configs; use a new run name for overrides')
     if args.run_name in ('', '.', '..') or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-' for c in args.run_name):
         p.error('run-name must be a plain name')
     if len(args.gpus) != len(set(args.gpus)):
@@ -56,6 +65,11 @@ def build_jobs(args):
         for order in ('parallel', 'serial'):
             for graph in ('causal', 'bidirectional'):
                 name = f'{protocol}/{order}/{graph}'
+                path = configs / (name.replace('/', '__') + '.yaml')
+                if args.resume and path.exists():
+                    saved = load_config([path])
+                    jobs.append(engine.Job(name, path, [], output / name, saved.train.max_steps))
+                    continue
                 cfg = load_config([reference, ROOT / 'configs/train/throughput.yaml'], [
                     f'output_dir={output / name}', 'model.architecture=dual', 'model.heads=2',
                     f'model.attention_order={order}', f'model.graph_attention={graph}',
@@ -63,11 +77,11 @@ def build_jobs(args):
                     'train.max_steps=140000', 'train.scale_stage_ends=[40000,70000,100000,140000]',
                     'evaluation.selection_min_step=100000',
                     'evaluation.save_trace_tokens=true',
-                    # Keep full best/last and all scale/shape tests; only rollout throughput changes.
+                    # Default to last/main; add best or extra sets explicitly for follow-up studies.
                     f'tracking.mode={args.tracking}', f'tracking.group={args.run_name}',
                     f'tracking.name={args.run_name}/{name}', f'tracking.variant=dual-{order}-{graph}',
                     f'tracking.tags=[dual_attention_v1,hard_dag_v1,{protocol},{order},{graph}]',
-                    'tracking.notes=Two 64-dimensional branches; fixed graph+QUERY memory; causal CoT history; matched parameters across eight cells; 140k shared curriculum.'])
+                    'tracking.notes=Two 64-dimensional branches; fixed graph+QUERY memory; causal CoT history; matched parameters across eight cells; 140k shared curriculum.'] + args.set)
                 path = configs / (name.replace('/', '__') + '.yaml')
                 raw = yaml.safe_dump(to_plain(cfg), sort_keys=False)
                 if path.exists() and path.read_text() != raw and (output / 'launch_plan.json').exists():

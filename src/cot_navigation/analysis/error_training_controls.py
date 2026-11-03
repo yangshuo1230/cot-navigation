@@ -13,7 +13,7 @@ from pathlib import Path
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--input',type=Path,default=Path('research/mechanistic_followup_20261019/results'))
+    p.add_argument('--input',type=Path,default=Path('studies/mechanistic_followup/results'))
     p.add_argument('--gpu',default='0');p.add_argument('--models',nargs='+',default=['context_dfs','context_bfs'])
     args=p.parse_args()
     if args.gpu!='0':p.error('Training is authorized on physical GPU0')

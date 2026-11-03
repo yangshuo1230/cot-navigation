@@ -15,7 +15,7 @@ import time
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT/'scripts'),str(ROOT/'src')]
-import train_first_round as engine
+from cot_navigation.experiments import scheduler as engine
 from cot_navigation.config import load_config
 from cot_navigation.data.dataset import ParametricWorld
 from cot_navigation.data.scale_prepared import ScalePreparedRows
@@ -86,7 +86,7 @@ def audit_final_trajectories(jobs,output,gpus):
         if available:
             break
         time.sleep(10)
-    argv=[sys.executable,str(ROOT/'research/scale_trace_audit_20261019/audit.py'),
+    argv=[sys.executable,str(ROOT/'studies/scale_trace_audit/audit.py'),
           '--job-file',str(jobfile),'--output-root',str(output/'semantic_audit')]
     with (output/'semantic_audit.log').open('a') as log:
         subprocess.run(argv,cwd=ROOT,env={**os.environ,'CUDA_VISIBLE_DEVICES':str(available[0]),'WANDB_MODE':'disabled'},
@@ -97,6 +97,7 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--arm',choices=['paired','joint_from_scratch'],default='paired',
                         help='paired: existing task-only/WALK comparison; joint: skip Stage A, train QUERY+WALK')
+    parser.add_argument('--semantic-audit',action='store_true',help='Opt in to post-training trajectory replay')
     parser.add_argument('--run-name')
     parser.add_argument('--gpus',nargs='+',type=int,default=list(range(1,8)))
     parser.add_argument('--protocols',nargs='+',choices=PROTOCOLS,default=list(PROTOCOLS))
@@ -117,7 +118,7 @@ def main(argv=None):
     args.protocols=list(dict.fromkeys(args.protocols))
     output,jobs=build_jobs(args)
     code=engine.execute(args,output,jobs,argv,script_path=Path(__file__),data_preparer=verify_cached_data)
-    if not code and not args.dry_run and not args.background:
+    if not code and not args.dry_run and not args.background and args.semantic_audit:
         audit_final_trajectories(jobs,output,args.gpus)
     return code
 

@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import probe_block_membership as base  # noqa: E402
 import probe_direct_reachability_layers as layers  # noqa: E402
 
-OUT = ROOT / "research/block_membership_probe_20261021/direct_bar_by_layer_hop.json"
+OUT = ROOT / "studies/block_membership_probe/direct_bar_by_layer_hop.json"
 FIG = ROOT / "figures/scale_v1/direct_bar_probe_by_layer_hop.png"
 LINE = ROOT / "figures/scale_v1/direct_bar_probe_by_hop.png"
 DEVICE = "cuda:0"

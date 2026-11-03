@@ -48,6 +48,7 @@ model:
   tie_embeddings: true
   attn_impl: math
   compile: false
+evaluation: {{final_checkpoints: []}}
 protocol: {{name: direct}}
 train:
   max_steps: {steps}

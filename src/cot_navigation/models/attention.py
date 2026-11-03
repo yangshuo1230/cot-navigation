@@ -136,7 +136,8 @@ class CausalSelfAttention(nn.Module):
             cache.write(layer_idx, k, v, positions)
             # Never shorten the allocated cache: STOP may rewind individual
             # rows. Only skip unread future keys in this attention operation.
-            end = cache.valid_length
+            valid = cache.max_len if cache.valid_length is None else cache.valid_length
+            end = min(cache.max_len, ((valid + 7) // 8) * 8)
             k_all = cache.k[layer_idx][:, :, :end]
             v_all = cache.v[layer_idx][:, :, :end]
             key_index = torch.arange(k_all.shape[2], device=x.device)

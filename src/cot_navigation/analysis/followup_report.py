@@ -11,7 +11,7 @@ import numpy as np
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--input',type=Path,default=Path('research/mechanistic_followup_20261019/results'))
+    p.add_argument('--input',type=Path,default=Path('studies/mechanistic_followup/results'))
     args=p.parse_args();root=args.input
     models=[json.loads(x.read_text()) for x in sorted((root/'models').glob('*.json'))]
     import matplotlib

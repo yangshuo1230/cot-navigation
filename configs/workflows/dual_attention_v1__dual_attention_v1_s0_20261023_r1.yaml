@@ -1,0 +1,51 @@
+version: 1
+run_name: dual_attention_v1__dual_attention_v1_s0_20261023_r1
+steps:
+- name: bfs_state__parallel__bidirectional
+  kind: train
+  configs:
+  - configs/generated/dual_attention_v1/dual_attention_v1_s0_20261023_r1/bfs_state__parallel__bidirectional.yaml
+  set:
+    tracking.mode: disabled
+- name: bfs_state__parallel__causal
+  kind: train
+  configs:
+  - configs/generated/dual_attention_v1/dual_attention_v1_s0_20261023_r1/bfs_state__parallel__causal.yaml
+  set:
+    tracking.mode: disabled
+- name: bfs_state__serial__bidirectional
+  kind: train
+  configs:
+  - configs/generated/dual_attention_v1/dual_attention_v1_s0_20261023_r1/bfs_state__serial__bidirectional.yaml
+  set:
+    tracking.mode: disabled
+- name: bfs_state__serial__causal
+  kind: train
+  configs:
+  - configs/generated/dual_attention_v1/dual_attention_v1_s0_20261023_r1/bfs_state__serial__causal.yaml
+  set:
+    tracking.mode: disabled
+- name: dfs_state__parallel__bidirectional
+  kind: train
+  configs:
+  - configs/generated/dual_attention_v1/dual_attention_v1_s0_20261023_r1/dfs_state__parallel__bidirectional.yaml
+  set:
+    tracking.mode: disabled
+- name: dfs_state__parallel__causal
+  kind: train
+  configs:
+  - configs/generated/dual_attention_v1/dual_attention_v1_s0_20261023_r1/dfs_state__parallel__causal.yaml
+  set:
+    tracking.mode: disabled
+- name: dfs_state__serial__bidirectional
+  kind: train
+  configs:
+  - configs/generated/dual_attention_v1/dual_attention_v1_s0_20261023_r1/dfs_state__serial__bidirectional.yaml
+  set:
+    tracking.mode: disabled
+- name: dfs_state__serial__causal
+  kind: train
+  configs:
+  - configs/generated/dual_attention_v1/dual_attention_v1_s0_20261023_r1/dfs_state__serial__causal.yaml
+  set:
+    tracking.mode: disabled

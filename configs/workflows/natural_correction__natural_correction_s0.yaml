@@ -1,0 +1,51 @@
+version: 1
+run_name: natural_correction__natural_correction_s0
+steps:
+- name: context__bfs_state__p30_l1
+  kind: train
+  configs:
+  - configs/generated/natural_correction/natural_correction_s0/context__bfs_state__p30_l1.yaml
+  set:
+    tracking.mode: disabled
+- name: context__bfs_state__p30_l16
+  kind: train
+  configs:
+  - configs/generated/natural_correction/natural_correction_s0/context__bfs_state__p30_l16.yaml
+  set:
+    tracking.mode: disabled
+- name: context__bfs_state__p50_l1
+  kind: train
+  configs:
+  - configs/generated/natural_correction/natural_correction_s0/context__bfs_state__p50_l1.yaml
+  set:
+    tracking.mode: disabled
+- name: context__bfs_state__p50_l16
+  kind: train
+  configs:
+  - configs/generated/natural_correction/natural_correction_s0/context__bfs_state__p50_l16.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__p30_l1
+  kind: train
+  configs:
+  - configs/generated/natural_correction/natural_correction_s0/context__dfs_state__p30_l1.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__p30_l16
+  kind: train
+  configs:
+  - configs/generated/natural_correction/natural_correction_s0/context__dfs_state__p30_l16.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__p50_l1
+  kind: train
+  configs:
+  - configs/generated/natural_correction/natural_correction_s0/context__dfs_state__p50_l1.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__p50_l16
+  kind: train
+  configs:
+  - configs/generated/natural_correction/natural_correction_s0/context__dfs_state__p50_l16.yaml
+  set:
+    tracking.mode: disabled

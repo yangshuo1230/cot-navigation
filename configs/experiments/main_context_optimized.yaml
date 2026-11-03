@@ -8,4 +8,4 @@ train:
 evaluation:
   batch_size: 8
   seed: 1729
-  test_samples: 0
+  test_samples: 256

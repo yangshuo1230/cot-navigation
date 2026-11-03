@@ -29,7 +29,7 @@ from cot_navigation.evaluation.rollout import generate  # noqa: E402
 from cot_navigation.models.record_attention import record_mask, record_metadata  # noqa: E402
 
 OUT = ROOT / "figures/scale_v1/dfs_context_local_attention_accuracy.png"
-JSON = ROOT / "research/block_membership_probe_20261021/dfs_context_local_attention.json"
+JSON = ROOT / "studies/block_membership_probe/dfs_context_local_attention.json"
 DEVICE = "cuda:0"
 MAX_LEN = 4096
 FREE_PER_CLASS = 64

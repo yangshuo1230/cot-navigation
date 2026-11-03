@@ -1,0 +1,63 @@
+"""Make one key figure and an explicit-scope, reproducible report."""
+from pathlib import Path
+import json
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+HERE=Path(__file__).resolve().parent
+names=['simple_fixed','simple_context','hard_fixed','hard_context']
+runs={name:json.loads((HERE/f'{name}.json').read_text()) for name in names}
+labels=['Input graph','Input query/world','Current stack','Current visited','Current delimiters','Previous record','Older CoT']
+indices=[0,1,2,3,5,6,7]
+fig,axes=plt.subplots(2,2,figsize=(12,8),layout='constrained')
+for ax,name in zip(axes.flat,names):
+    r=runs[name];v=np.asarray(r['reference']['roles']['candidate_nonempty']['raw_mass'])
+    a=100*v[:,indices].T
+    im=ax.imshow(a,cmap='YlOrRd',vmin=0,vmax=100,aspect='auto')
+    ax.set(xticks=np.arange(6),xticklabels=[f'L{i}' for i in range(1,7)],yticks=np.arange(7),yticklabels=labels,
+           title=f"{name.replace('_',' ').title()} (best step {r['step']//1000}k)")
+    for y in range(7):
+        for x in range(6):
+            if a[y,x]>=5:ax.text(x,y,f'{a[y,x]:.0f}',ha='center',va='center',fontsize=9,color='white' if a[y,x]>65 else 'black')
+fig.colorbar(im,ax=axes.ravel().tolist(),label='Attention mass (%)',shrink=.8)
+fig.suptitle('DFS candidate prediction: shared state reads, different routing layers\nCorrect reference prefixes; query-macro averages',fontsize=14)
+fig.savefig(HERE/'dfs_attention_comparison.png',dpi=180);fig.savefig(HERE/'dfs_attention_comparison.pdf');plt.close(fig)
+
+lines=['# Fixed DFS 合法性与 In-Context 注意力对照（2026-10-26）','',
+       '固定图与In-Context都存在对当前显式状态的集中读取，但使用层和知识获取通路不同。该观察不是同一算法电路的证明。','',
+       '## 固定图完整轨迹合法率','',
+       '来自 fixed100_legality 已完成的全正向测试池逐步独立重放，使用相同best checkpoint。没有用本次小注意力面板重新估计完整池合法率。','',
+       '|图|协议|完整轨迹及答案合法|比例|','|---|---|---:|---:|',
+       '|simple|DFS node|1047/1091|96.0%|','|simple|DFS state|1018/1091|93.3%|',
+       '|hard|DFS node|500/555|90.1%|','|hard|DFS state|492/555|88.6%|','',
+       '完整合法要求每步状态、候选和动作正确，并正确终止/回答，不要求复制某一种邻居顺序。这是查询级完整率，不是单token或单步平均正确率。simple DFS state另有18条一直合法但STOP中止；其余55条首次语义错误。hard DFS state的63条失败均有语义首错，无STOP。','',
+       'simple DFS state首错：候选集合44、动作5、记录过长2、visited2、非法PUSH1、frontier1。hard DFS state首错：候选集合52、动作8、frontier3；候选首错处可见6次非边PUSH、7次重复访问PUSH，存在重叠，不能当作独立错误总数相加。','',
+       '## 新注意力实验设计','',
+       '- 4个冻结DFS state模型：简单/困难×固定/In-Context，各自validation-best；路径、step、SHA、数据集保存在4个JSON。层数6、1头、hidden128。',
+       '- 各自64个val查询校准，每个模型/层/头/预测字段/精确相对距离单独计算平均注意力；在各自不重叠的64个test查询上统计 A−mean(A|distance)。不使用测试拟合距离均值。',
+       '- 每个查询最多4个参考记录，观察frontier首token、visited首token、非空候选首token和动作预测位置。报告query-macro平均，防止长轨迹独占权重。',
+       '- 只纳入预测位置≤4096的早期/中期状态，保留模型原生上下文上限。这不是全部32K历史位置的对照。',
+       '- 另在每个跨度×标签桶预先取1个test查询，自由生成到首个语义错误，观察此前合法原生记录。固定图各16条；In-Context各18条。native是描述性小面板，不用作完整池合法率。',
+       '- QKV只读hook重算所选注意力行。第一批带/不带hook logits逐元素完全一致；权重和为1；原模型输出不被修改。没有训练/消融，没有保存激活、全注意力矩阵、新checkpoint或W&B run。',
+       '- fixed没有输入图；其QUERY/WORLD归为input query/world。图角色为零是任务定义。各模型图实例、知识来源、训练课程/步数不同，不把差异归因于单独一个变量。','',
+       '## 非空候选首token：主要通路','',
+       '|模型|层|参考轨迹：visited总质量|其中当前节点|stack总质量|输入图总质量|原生合法前缀：visited/stack/graph|',
+       '|---|---|---:|---:|---:|---:|---|']
+for name,layer in [('simple_fixed',3),('simple_fixed',5),('hard_fixed',2),('simple_context',4),('simple_context',6),('hard_context',4),('hard_context',6)]:
+    r=runs[name];a=r['reference']['roles']['candidate_nonempty']['raw_mass'][layer-1]
+    b=r['native_legal_prefix']['roles']['candidate_nonempty']['raw_mass'][layer-1]
+    lines.append(f'|{name}|L{layer}|{100*a[3]:.2f}%|{100*a[8]:.2f}%|{100*a[2]:.2f}%|{100*a[0]:.2f}%|{100*b[3]:.1f}% / {100*b[2]:.1f}% / {100*b[0]:.1f}%|')
+lines += ['', '困难In-Context L6的54.3%图质量中，51.0%位于当前节点出边之后的EDGE/QUERY边界标记，而非原始终点token。与此前独立局部因果分析发现的后继标记通路一致；本次只观察注意力，不重复进行该因果干预。','',
+          '## 距离校正与解释边界','',
+          '原始高注意力不能全部解释为语义。例如simple fixed L3的visited质量99.85%，但visited中当前节点的每key平均距离校正残差为−0.0022；不能把该层单凭raw高值称为当前节点专属寻址。更清楚的语义选择性出现在后面L4/L5。','',
+          '|模型/位置|每key平均距离校正残差|','|---|---:|']
+for name,layer,k in [('simple_fixed',4,8),('simple_fixed',5,10),('hard_fixed',2,8),('simple_context',4,10),('hard_context',4,8)]:
+    value=runs[name]['reference']['roles']['candidate_nonempty']['distance_centered_density'][layer-1][k]
+    role='visited当前节点' if k==8 else 'stack当前节点'
+    lines.append(f'|{name} L{layer} {role}|{value:+.4f}|')
+lines += ['', '这些残差是带符号的每key密度，不是概率，不能与raw质量的百分比直接相加。距离均值校正只控制经验相对距离，不保证消除所有位置/字段混杂。','',
+          '相似点：候选生成时会读取显式状态，常集中于当前节点所在的stack或visited位置。不同点：fixed的主要读取层更早或分散到历史记录，而In-Context还存在后段读取输入图的路径。大visited注意力可能主要用于定位当前节点，不等于利用整个visited集合执行排重；本次未对fixed逐层屏蔽这些位置，不能认定其与In-Context有相同功能电路。','',
+          '原生合法前缀支持主要集中读取并非只在教师强制轨迹下出现，但面板较小，且不覆盖首错之后的错误状态；不能将观察到的注意力模式解释为高完整合法率的原因。']
+(HERE/'REPORT.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+print('Wrote report and one figure')

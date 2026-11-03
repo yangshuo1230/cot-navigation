@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "basis": "per_example_actual_cot_tokens_before_answer",
+  "tokens_per_weight": 128,
+  "lower": 1.0,
+  "upper": 16.0,
+  "formula": "lambda_i=clip(L_i/128,1,16)",
+  "normalization": "2*(answer_ce_i+lambda_i*mean_trace_ce_i)/(1+lambda_i)",
+  "include_error_and_repair_tokens": true,
+  "exclude_answer_eos_padding": true
+}

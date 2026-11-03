@@ -27,7 +27,7 @@ import plot_path_edge_decode as decode  # noqa: E402
 import cot_navigation.models.transformer as transformer  # noqa: E402
 
 OUT = ROOT / "figures/hard_dag_v1/path_edge_route.png"
-JSON = ROOT / "research/block_membership_probe_20261021/path_edge_route.json"
+JSON = ROOT / "studies/block_membership_probe/path_edge_route.json"
 DEVICE = "cuda:3"
 
 # Shared masks, scored on every intermediate path step at once.
@@ -222,7 +222,7 @@ def draw(pred_blocks, route_blocks) -> None:
 def main() -> None:
     device = torch.device(DEVICE)
     _cfg, tok, model, step = base.load_model(pathfig.RUN, device)
-    pred = json.loads((ROOT / "research/block_membership_probe_20261021/path_edge_decode.json").read_text())
+    pred = json.loads((ROOT / "studies/block_membership_probe/path_edge_decode.json").read_text())
     saved = []
     for (name, root), pred_block in zip(pathfig.SIZES, pred):
         arrays = pathfig.load_test(root)

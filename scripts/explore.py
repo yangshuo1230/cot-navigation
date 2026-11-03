@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 sys.path.insert(0, str(ROOT/'scripts'))
-import train_first_round as engine
+from cot_navigation.experiments import scheduler as engine
 from cot_navigation.config import load_config
 from retrain import prepare_only
 

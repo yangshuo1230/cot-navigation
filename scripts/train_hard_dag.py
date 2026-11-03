@@ -27,7 +27,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 sys.path.insert(0, str(ROOT / 'scripts'))
-import train_first_round as engine
+from cot_navigation.experiments import scheduler as engine
 from cot_navigation.config import load_config, to_plain
 from cot_navigation.data.shards import atomic_json
 
@@ -90,11 +90,11 @@ def shared(args):
             'model.swa_records=0', 'train.trace_loss_lambda=1.0', 'protocol.cot_margin=8',
             f'protocol.trajectory_variants={args.variants}', 'runtime.device=cuda',
             'runtime.cuda_device=0', 'runtime.smoke=false', 'train.persist_outputs=true',
-            'train.model_seed=0', 'train.eval_interval=5000', 'train.save_interval=5000',
+            'train.model_seed=0', 'train.eval_interval=20000', 'train.free_eval_interval=20000', 'train.save_interval=10000',
             'train.eval_samples=128', 'train.free_gen_samples=64', 'train.keep_last=1',
             'train.max_tokens_per_microbatch=65536', 'evaluation.batch_size=16',
             'evaluation.test_samples=256', 'evaluation.trace_diagnostics=false',
-            'evaluation.final_checkpoints=[best,last]', f'tracking.mode={args.tracking}',
+            'evaluation.final_checkpoints=[last]', f'tracking.mode={args.tracking}',
             f'tracking.group={args.run_name}', 'tracking.tags=[hard_dag_v1,nonlayered]',
             'tracking.notes=Hidden-topological multiscale DAG; distance is rank-band gap, not shortest hops. Full reference traces; no truncation.']
 
@@ -113,6 +113,11 @@ def build_jobs(args):
 
     def add(name, preset, steps, flags, parent=None):
         out = output / name
+        path = configs / (name.replace('/', '__') + '.yaml')
+        if args.resume and path.exists():
+            saved = load_config([path])
+            jobs.append(engine.Job(name, path, [], out, saved.train.max_steps, parent))
+            return
         cfg = load_config([ROOT / f'configs/experiments/{preset}.yaml'], shared(args) + flags + [
             f'output_dir={out}', f'train.max_steps={steps}',
             f'tracking.name={args.run_name}/{name}', f'tracking.variant={name.replace("/", "-")}'])
@@ -135,7 +140,7 @@ def build_jobs(args):
             'train.shuffle_context_edges=true', f'train.scale_roots={json.dumps(roots)}',
             'train.scale_stage_ends=[50000,100000,150000,200000]',
             f'train.scale_stage_weights={json.dumps(stage_weights)}',
-            'evaluation.selection_min_step=150000', f'evaluation.extra_sets={json.dumps(extras)}'])
+            'evaluation.selection_min_step=150000', 'evaluation.extra_sets=[]'])
     for l, w, steps in ((6, 6, 75000), (10, 10, 125000)):
         root = root_for('fixed', l, w, args)
         common = data_flags('fixed', l, w, args) + [f'train.scale_roots=[{root}]', 'train.scale_weights=[1.0]']

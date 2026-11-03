@@ -1,0 +1,97 @@
+{
+  "protocol_version": 1,
+  "cohort": "legacy6_s0123_supplement_20261102",
+  "output": "outputs/analysis/correction_behavior/legacy6_s0123_supplement_20261102",
+  "reference_results_dir": "outputs/analysis/correction_behavior/legacy6_s0123_supplement_20261102/references/results",
+  "controls": "旧版6层matched_clean 0%与correction 30%，各seed0/1/2/3；不使用已废弃depth-rate批次。matched_clean通过专用采样器返回干净轨迹，配置中的0.3采样率不是错误曝光率。",
+  "settings": {
+    "queries": 256,
+    "batch": 32,
+    "query_seed": 20261031,
+    "checkpoint_step": 200000,
+    "precision": "bf16",
+    "population": "reachable",
+    "max_seq_len": 4096
+  },
+  "tasks": [
+    "n32",
+    "n64",
+    "main",
+    "deep",
+    "hard"
+  ],
+  "models": [
+    {
+      "id": "l6_p0_s0",
+      "group": "l6_p0",
+      "layers": 6,
+      "error_rate": 0,
+      "training_arm": "matched_clean",
+      "seed": 0,
+      "run": "outputs/correction_reproduction_v1/launches/dfs_correction_repro_20261028/dfs_state/matched_clean/s0"
+    },
+    {
+      "id": "l6_p0_s1",
+      "group": "l6_p0",
+      "layers": 6,
+      "error_rate": 0,
+      "training_arm": "matched_clean",
+      "seed": 1,
+      "run": "outputs/correction_reproduction_v1/launches/dfs_correction_repro_20261028/dfs_state/matched_clean/s1"
+    },
+    {
+      "id": "l6_p0_s2",
+      "group": "l6_p0",
+      "layers": 6,
+      "error_rate": 0,
+      "training_arm": "matched_clean",
+      "seed": 2,
+      "run": "outputs/correction_reproduction_v1/launches/dfs_correction_repro_20261028/dfs_state/matched_clean/s2"
+    },
+    {
+      "id": "l6_p0_s3",
+      "group": "l6_p0",
+      "layers": 6,
+      "error_rate": 0,
+      "training_arm": "matched_clean",
+      "seed": 3,
+      "run": "outputs/correction_reproduction_v1/launches/dfs_correction_repro_20261028/dfs_state/matched_clean/s3"
+    },
+    {
+      "id": "l6_p30_s0",
+      "group": "l6_p30",
+      "layers": 6,
+      "error_rate": 0.3,
+      "training_arm": "correction",
+      "seed": 0,
+      "run": "outputs/correction_reproduction_v1/launches/dfs_correction_repro_20261028/dfs_state/correction/s0"
+    },
+    {
+      "id": "l6_p30_s1",
+      "group": "l6_p30",
+      "layers": 6,
+      "error_rate": 0.3,
+      "training_arm": "correction",
+      "seed": 1,
+      "run": "outputs/correction_reproduction_v1/launches/dfs_correction_repro_20261028/dfs_state/correction/s1"
+    },
+    {
+      "id": "l6_p30_s2",
+      "group": "l6_p30",
+      "layers": 6,
+      "error_rate": 0.3,
+      "training_arm": "correction",
+      "seed": 2,
+      "run": "outputs/correction_reproduction_v1/launches/dfs_correction_repro_20261028/dfs_state/correction/s2"
+    },
+    {
+      "id": "l6_p30_s3",
+      "group": "l6_p30",
+      "layers": 6,
+      "error_rate": 0.3,
+      "training_arm": "correction",
+      "seed": 3,
+      "run": "outputs/correction_reproduction_v1/launches/dfs_correction_repro_20261028/dfs_state/correction/s3"
+    }
+  ]
+}

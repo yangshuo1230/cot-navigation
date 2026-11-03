@@ -49,7 +49,7 @@ from cot_navigation.analysis.set_metrics import set_quality, scores  # noqa: E40
 from cot_navigation.protocols.bfs import bfs_search, first_expansion_order  # noqa: E402
 from cot_navigation.protocols.dfs import dfs_search  # noqa: E402
 
-OUT = ROOT / "research/node_search_state_probe_20261021/results.json"
+OUT = ROOT / "studies/node_search_state_probe/results.json"
 FIG = ROOT / "figures/scale_v1/node_search_state_probe.png"
 FIG_LAYERS = ROOT / "figures/scale_v1/node_search_state_layers.png"
 FIG_SELECTION = ROOT / "figures/scale_v1/node_search_state_selection.png"

@@ -28,7 +28,7 @@ def test_formal_plan_has_one_shared_knowledge_parent_and_active_protocols():
         cfg = entry["config"]
         assert not cfg["runtime"]["smoke"] and cfg["train"]["persist_outputs"]
         assert cfg["protocol"]["filler_tokens"] is None
-        assert cfg["train"]["eval_interval"] == 1000
+        assert cfg["train"]["eval_interval"] == 20000
     assert not output.exists()
 
 
@@ -106,7 +106,7 @@ def test_background_creates_log_parent_and_detaches_without_training(tmp_path, m
 
 
 def test_background_dry_run_and_invalid_gpu_never_spawn_or_create_dirs(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner, "idle_gpus", lambda: [{"index": i, "idle": True} for i in range(8)])
+    monkeypatch.setattr(__import__("cot_navigation.experiments.scheduler", fromlist=["scheduler"]), "idle_gpus", lambda: [{"index": i, "idle": True} for i in range(8)])
     def forbidden(*args, **kwargs):
         raise AssertionError("no subprocess should be started")
     monkeypatch.setattr(runner.subprocess, "Popen", forbidden)
@@ -128,7 +128,7 @@ def test_resume_can_retry_sampler_initialization_without_a_checkpoint(tmp_path,m
     (job.output/'resolved_config.yaml').write_text('{}')
     (job.output/'train.log').write_text('ValueError: empty curriculum stratum 7/0\n')
     assert runner.initialization_only(job.output)
-    monkeypatch.setattr(runner,'idle_gpus',lambda:[])
+    monkeypatch.setattr(__import__("cot_navigation.experiments.scheduler", fromlist=["scheduler"]),'idle_gpus',lambda:[])
     # Exercise preflight without starting a process or training. The records
     # guard passes; scheduling reaches the expected no-idle-GPU condition.
     with pytest.raises(RuntimeError,match='No selected GPU is idle'):

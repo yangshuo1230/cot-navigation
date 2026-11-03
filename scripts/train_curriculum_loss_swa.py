@@ -14,8 +14,8 @@ import yaml
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT/'src'),str(ROOT/'scripts')]
-import train_first_round as engine
-from cot_navigation.config import load_config
+from cot_navigation.experiments import scheduler as engine
+from cot_navigation.config import load_config, apply_training_profile
 
 ARMS={'full_l1':(1,0),'full_l4':(4,0),'full_l16':(16,0),'swa1_l1':(1,1),'swa2_l1':(1,2)}
 OLD=ROOT/'outputs/scale_v1/launches/scale_v1_s0'
@@ -53,18 +53,22 @@ def build_jobs(args):
             original=OLD/rel/protocol/'resolved_config.yaml'
             for arm in args.arms:
                 lam,window=ARMS[arm]
-                cfg=yaml.safe_load(original.read_text())
+                cfg=apply_training_profile(yaml.safe_load(original.read_text()))
                 name=f'{setting}/{protocol}/{arm}'
                 cfg['output_dir']=str(out/name)
                 cfg['train']['trace_loss_lambda']=float(lam)
                 cfg['model']['swa_records']=window
                 cfg['model']['swa_backend']=args.swa_backend
-                if window:cfg['model']['compile']=False
+                if window:
+                    cfg['model']['compile']=False
+                    cfg['evaluation']['compile_generation']=False
                 cfg['tracking'].update(mode=args.tracking,group=args.run_name,
                     name=f'{args.run_name}/{name}',variant=arm,
                     tags=['curriculum_loss_swa',setting,protocol,arm],
                     notes='Normalized task loss; record SWA preserves input and absolute RoPE.')
                 path=generated/(name.replace('/','__')+'.yaml')
+                if args.resume and path.exists():
+                    cfg = yaml.safe_load(path.read_text())
                 text=yaml.safe_dump(cfg,sort_keys=False)
                 if path.exists() and path.read_text()!=text:
                     raise ValueError(f'Immutable generated configuration differs: {path}; use a new run name')

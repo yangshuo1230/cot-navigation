@@ -1,0 +1,36 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>纠错模型行为分析固定流程</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#f3f5f8;color:#1e293b;font:15px/1.65 system-ui,sans-serif}main{max-width:1300px;margin:auto;padding:24px}section{padding:18px;margin:18px 0;background:white;border:1px solid #dce2ec;border-radius:12px;min-width:0}h1{font-size:26px}h2{font-size:18px}.scroll{overflow:auto;max-width:100%}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:8px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap}td:first-child,th:first-child{text-align:left}select{font:inherit;padding:8px;max-width:100%}p{overflow-wrap:anywhere}.warning{background:#fff8e9;padding:12px;border-left:4px solid #e4ad45}@media(max-width:700px){main{padding:12px}section{padding:12px}}</style>
+<main><h1>纠错模型行为分析 · 固定流程v1</h1><p id="status"></p><p class="warning" id="controls"></p>
+<label>图设置 <select id="task"></select></label> <label>模型组 <select id="group"></select></label>
+<section><h2>本图各模型组：答案、合法性与首错</h2><div class="scroll" id="overview"></div></section>
+<section><h2>此前错误数量与后续风险</h2><label>历史定义 <select id="history"><option value="by_history">错误记录数</option><option value="by_unresolved">未取消错误记录数</option><option value="by_events">错误事件数</option><option value="excluding_goal">排除已到目标位置</option></select></label><div class="scroll" id="risks"></div></section>
+<section><h2>首错后+1至+5与删失</h2><div class="scroll" id="lags"></div></section>
+<section><h2>错误类型 × 历史次数</h2><label>类型 <select id="type"></select></label><label>定义 <select id="typeMode"><option value="first_type_history">按首错类型分组</option><option value="type_specific">该类型的累计次数</option></select></label><div class="scroll" id="types"></div></section>
+<section><h2>CoT长度风险与共同支持比较</h2><div class="scroll" id="hazard"></div><div class="scroll" id="adjusted"></div><p>长度/状态控制为观察性比较，非因果估计；只在有共同支持的位置比较此前0与1条错误。首错风险按每100个仍未出错的CoT token计算，不含输入边列表。</p></section>
+<section><h2>自然报错与错误候选使用</h2><div class="scroll" id="markers"></div></section>
+<section><h2>错误状态的结构延续</h2><div class="scroll" id="following"></div></section>
+<section><h2>非法动作后局部一致性</h2><div class="scroll" id="local"></div><p>局部执行一致不表示全局导航正确；原样执行错误动作与拒绝动作分别构造，不改生成token。无法构造的状态不强行评分。</p></section>
+<section><h2>回溯时错误候选复现</h2><div class="scroll" id="revisits"></div><p>只算合法离开并返回同一祖先栈；MISTAKE原地重试不算。未回访不等于纠正，仍需后继的遗漏与已被访问后继分开。</p></section>
+<section><h2>所选组的各seed</h2><div class="scroll" id="seeds"></div><p>按记录的风险与最终答案准确率是不同分母。置信区间对query及model seed交叉重采样；样本少时仅供描述。JSON中保留长度分层各字段风险等完整汇总。</p></section>
+</main><script>
+const DATA=__DATA__,$=id=>document.getElementById(id),pct=x=>x==null?'NA':(100*x).toFixed(1)+'%',frac=(n,d)=>d?n+'/'+d+' ('+pct(n/d)+')':'NA',esc=x=>String(x).replaceAll('&','&amp;').replaceAll('<','&lt;');
+const table=(h,r)=>'<table><thead><tr>'+h.map(x=>'<th>'+esc(x)+'</th>').join('')+'</tr></thead><tbody>'+r.map(v=>'<tr>'+v.map(x=>'<td>'+esc(x)+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
+for(const t of Object.keys(DATA.tasks))$('task').add(new Option(t,t));
+function render(){const groups=DATA.tasks[$('task').value]??{},names=Object.keys(groups).sort(),old=$('group').value;$('group').replaceChildren(...names.map(g=>new Option(g,g)));if(names.includes(old))$('group').value=old;const g=groups[$('group').value];
+$('status').textContent=DATA.cohort+' · '+DATA.complete_tasks+'/'+DATA.total_tasks+'模型—图任务 · '+(DATA.complete?'全部完成':'部分结果，不作为完整比较');$('controls').textContent=DATA.controls;
+$('overview').innerHTML=table(['组','seed','轨迹数','答案正确','CoT合法','出现首错','预算中断','非法/无法执行动作删失'],names.map(n=>{const x=groups[n];return[n,x.seeds.join(','),x.n,frac(x.correct,x.n),frac(x.valid,x.n),x.first_error_trajectories,x.interrupted,x.illegal_action_censored];}));
+if(!g){for(const id of ['risks','lags','types','hazard','adjusted','markers','following','local','revisits','seeds'])$(id).textContent='等待完整的模型—图任务';return;}
+$('risks').innerHTML=table(['此前错误数','记录数','模型-查询数','任意错误率','动作错误率','主定义95%区间'],Object.entries(g[$('history').value]).map(([k,r])=>[k,r.n,r.queries,pct(r.bad_rate),pct(r.action_bad_rate),r.ci95?r.ci95.map(pct).join('–'):'NA']));
+$('lags').innerHTML=table(['偏移','原首错轨迹数','可评分数','错误率','非法动作删失','预算删失','其他终止'],g.first_error_lags.filter(r=>r.first_type==='all').map(r=>[r.lag,r.initial_error_trajectories,r.n,pct(r.bad_rate),r.unavailable.illegal_action??0,r.unavailable.budget??0,r.unavailable.other_end??0]));
+const typeRows=g[$('typeMode').value],types=[...new Set(typeRows.map(r=>r.type))].sort(),prev=$('type').value;$('type').replaceChildren(...types.map(t=>new Option(t,t)));if(types.includes(prev))$('type').value=prev;
+$('types').innerHTML=table(['此前次数','记录数','查询数','错误率','动作错误率'],typeRows.filter(r=>r.type===$('type').value).map(r=>[r.prior,r.n,r.queries,pct(r.bad_rate),pct(r.action_bad_rate)]));
+$('hazard').innerHTML=table(['CoT位置','风险token','首错数','每100 token首错数'],g.hazard.map(r=>[r.lo+'–'+(r.hi-1),r.exposure,r.events,r.per100==null?'NA':r.per100.toFixed(3)]));
+$('adjusted').innerHTML=table(['控制项','无错覆盖','后错覆盖/全部','记录风险差','不可执行动作风险差'],Object.entries(g.adjusted).map(([k,r])=>[k,r.clean_records,r.post_records+'/'+r.total_post_records,r.metrics.bad.delta==null?'NA':(100*r.metrics.bad.delta).toFixed(2)+' pp',r.metrics.illegal_action.delta==null?'NA':(100*r.metrics.illegal_action.delta).toFixed(2)+' pp']));
+$('markers').innerHTML=table(['真MISTAKE','误MISTAKE','修复记录','非法PUSH来自当前错误候选'],[[g.true_marks,g.false_marks,g.repairs,frac(g.all.illegal_push_from_candidates,g.all.illegal_push)]]);
+$('following').innerHTML=table(['前条错误字段','取消动作','转移数','仅符合错误打印更新','仅符合真状态','两者','两者都不符合'],g.structure.following.map(r=>[r.field,r.cancel,r.n,r.counts.printed_wrong_state??0,r.counts.true_state??0,r.counts.both??0,r.counts.neither??0]));
+$('local').innerHTML=table(['偏移','观察数','可构造状态','栈符合执行','visited符合执行','全字段符合执行','全字段符合拒绝数','全字段符合打印状态更新'],g.structure.local.map(r=>[r.offset,r.observed,r.supported,frac(r.frontier,r.supported),frac(r.visited,r.supported),frac(r.all,r.supported),r.reject_all,frac(r.printed_all,r.printed_supported)]));
+const r=g.structure.revisits;$('revisits').innerHTML=table(['未用错误候选事件','无回访','回访相同错误节点','回访候选仍有错','仍需后继重复遗漏','原干净候选回访变错'],[[r.extra_anchors,r.extra_no_return,frac(r.same_extra,r.extra_returns),frac(r.extra_return_bad,r.extra_returns),frac(r.same_missing,r.missing_returns),frac(r.clean_then_bad,r.clean_returns)]]);
+$('seeds').innerHTML=table(['seed','轨迹数','答案正确','CoT合法','首错轨迹数'],Object.entries(g.per_seed).map(([seed,r])=>[seed,r.n,pct(r.correct/r.n),pct(r.valid/r.n),r.first_error_trajectories]));
+location.hash=new URLSearchParams({task:$('task').value,group:$('group').value,history:$('history').value}).toString();}
+for(const id of ['task','group','history','type','typeMode'])$(id).addEventListener('change',render);const params=new URLSearchParams(location.hash.slice(1));if([...$('task').options].some(o=>o.value===params.get('task')))$('task').value=params.get('task');render();if([...$('group').options].some(o=>o.value===params.get('group')))$('group').value=params.get('group');if([...$('history').options].some(o=>o.value===params.get('history')))$('history').value=params.get('history');render();
+</script></html>

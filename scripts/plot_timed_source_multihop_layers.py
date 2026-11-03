@@ -25,10 +25,10 @@ from cot_navigation.config import load_config  # noqa: E402
 from cot_navigation.models.transformer import build_model  # noqa: E402
 from cot_navigation.protocols.tokenizer import Tokenizer  # noqa: E402
 
-RUN = ROOT / "research/direct_multihop_20261021/runs/direct_multihop_20261021_v1/timed_source_last_joint_lr3e4"
-DATA = ROOT / "research/direct_multihop_20261021/data_v1/arrays.npz"
-FIG = ROOT / "figures/direct_multihop_20261021/timed_source_hop3_layers.png"
-JSON = ROOT / "research/direct_multihop_20261021/timed_source_hop3_layers.json"
+RUN = ROOT / "studies/direct_multihop/runs/direct_multihop_v1/timed_source_last_joint_lr3e4"
+DATA = ROOT / "studies/direct_multihop/data_v1/arrays.npz"
+FIG = ROOT / "figures/direct_multihop/timed_source_hop3_layers.png"
+JSON = ROOT / "studies/direct_multihop/timed_source_hop3_layers.json"
 DEVICE = "cuda:0"
 YES, NO = 6, 7
 N_LAYERS = 6

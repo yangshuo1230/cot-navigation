@@ -13,7 +13,7 @@ def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--input',type=Path,default=Path('research/mechanistic_followup_20261019/results'))
+    p.add_argument('--input',type=Path,default=Path('studies/mechanistic_followup/results'))
     args=p.parse_args();root=args.input
     settings=json.loads((root/'settings.json').read_text())
     previous=Path(settings['previous']);old_verify=json.loads((previous/'verification.json').read_text())

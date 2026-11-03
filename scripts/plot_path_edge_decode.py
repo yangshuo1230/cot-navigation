@@ -25,7 +25,7 @@ import plot_path_dag_attention as pathfig  # noqa: E402
 from cot_navigation.evaluation.rollout import generate  # noqa: E402
 
 OUT = ROOT / "figures/hard_dag_v1/path_edge_decode.png"
-JSON = ROOT / "research/block_membership_probe_20261021/path_edge_decode.json"
+JSON = ROOT / "studies/block_membership_probe/path_edge_decode.json"
 DEVICE = "cuda:3"
 EDITS = ("Shuffle heads", "Drop edges from here", "Only edges from here")
 
@@ -165,7 +165,7 @@ def summarize_size(model, tok, items, device, rng) -> dict:
 
 
 def draw(blocks: list[dict]) -> None:
-    copy = json.loads((ROOT / "research/block_membership_probe_20261021/path_edge_copy_offset.json").read_text())
+    copy = json.loads((ROOT / "studies/block_membership_probe/path_edge_copy_offset.json").read_text())
     direct_head = [0.015, 0.007, 0.000]
     plt.rcParams.update({
         "font.family": "sans-serif", "font.sans-serif": ["DejaVu Sans"], "axes.linewidth": 0.6,

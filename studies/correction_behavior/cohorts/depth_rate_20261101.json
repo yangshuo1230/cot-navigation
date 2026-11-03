@@ -1,0 +1,129 @@
+{
+  "protocol_version": 1,
+  "cohort": "depth_rate_20261101",
+  "output": "outputs/analysis/correction_behavior/depth_rate_20261101",
+  "controls": "本批无同批0%干净对照；比较6/9层与30/60/90%掺入率，不用历史6层代替9层基线。",
+  "settings": {
+    "queries": 256,
+    "batch": 32,
+    "query_seed": 20261031,
+    "checkpoint_step": 200000,
+    "precision": "bf16",
+    "population": "reachable",
+    "max_seq_len": 4096
+  },
+  "tasks": [
+    "n32",
+    "n64",
+    "main",
+    "deep",
+    "hard"
+  ],
+  "models": [
+    {
+      "id": "l6_p30_s0",
+      "group": "l6_p30",
+      "layers": 6,
+      "error_rate": 0.3,
+      "seed": 0,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l6_p30/s0"
+    },
+    {
+      "id": "l6_p30_s1",
+      "group": "l6_p30",
+      "layers": 6,
+      "error_rate": 0.3,
+      "seed": 1,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l6_p30/s1"
+    },
+    {
+      "id": "l6_p60_s0",
+      "group": "l6_p60",
+      "layers": 6,
+      "error_rate": 0.6,
+      "seed": 0,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l6_p60/s0"
+    },
+    {
+      "id": "l6_p60_s1",
+      "group": "l6_p60",
+      "layers": 6,
+      "error_rate": 0.6,
+      "seed": 1,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l6_p60/s1"
+    },
+    {
+      "id": "l6_p90_s0",
+      "group": "l6_p90",
+      "layers": 6,
+      "error_rate": 0.9,
+      "seed": 0,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l6_p90/s0"
+    },
+    {
+      "id": "l6_p90_s1",
+      "group": "l6_p90",
+      "layers": 6,
+      "error_rate": 0.9,
+      "seed": 1,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l6_p90/s1"
+    },
+    {
+      "id": "l9_p30_s0",
+      "group": "l9_p30",
+      "layers": 9,
+      "error_rate": 0.3,
+      "seed": 0,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l9_p30/s0"
+    },
+    {
+      "id": "l9_p30_s1",
+      "group": "l9_p30",
+      "layers": 9,
+      "error_rate": 0.3,
+      "seed": 1,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l9_p30/s1"
+    },
+    {
+      "id": "l9_p60_s0",
+      "group": "l9_p60",
+      "layers": 9,
+      "error_rate": 0.6,
+      "seed": 0,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l9_p60/s0"
+    },
+    {
+      "id": "l9_p60_s1",
+      "group": "l9_p60",
+      "layers": 9,
+      "error_rate": 0.6,
+      "seed": 1,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l9_p60/s1"
+    },
+    {
+      "id": "l9_p90_s0",
+      "group": "l9_p90",
+      "layers": 9,
+      "error_rate": 0.9,
+      "seed": 0,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l9_p90/s0"
+    },
+    {
+      "id": "l9_p90_s1",
+      "group": "l9_p90",
+      "layers": 9,
+      "error_rate": 0.9,
+      "seed": 1,
+      "run": "outputs/correction_depth_rate/launches/dfs_depth_rate_20261031/dfs_state/l9_p90/s1"
+    }
+  ],
+  "lifecycle": "deprecated",
+  "withdrawal": {
+    "lifecycle": "deprecated",
+    "date": "2026-11-02",
+    "reason": "User reported this experimental cohort has a problem; specific cause not supplied.",
+    "scope": "6/9 layers x 30/60/90 percent x seeds0/1; checkpoints and all derived analyses, figures, and claims",
+    "preserve": "Raw files retained for provenance; no conclusions, baseline reuse, donors or initialization reuse permitted.",
+    "stopped_oracle_pid": 3533834
+  }
+}

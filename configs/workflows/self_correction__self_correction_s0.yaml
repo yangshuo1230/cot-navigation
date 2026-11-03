@@ -1,0 +1,51 @@
+version: 1
+run_name: self_correction__self_correction_s0
+steps:
+- name: context__bfs_state__p15_full_loss
+  kind: train
+  configs:
+  - configs/generated/self_correction/self_correction_s0/context__bfs_state__p15_full_loss.yaml
+  set:
+    tracking.mode: disabled
+- name: context__bfs_state__p15_masked
+  kind: train
+  configs:
+  - configs/generated/self_correction/self_correction_s0/context__bfs_state__p15_masked.yaml
+  set:
+    tracking.mode: disabled
+- name: context__bfs_state__p30_full_loss
+  kind: train
+  configs:
+  - configs/generated/self_correction/self_correction_s0/context__bfs_state__p30_full_loss.yaml
+  set:
+    tracking.mode: disabled
+- name: context__bfs_state__p30_masked
+  kind: train
+  configs:
+  - configs/generated/self_correction/self_correction_s0/context__bfs_state__p30_masked.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__p15_full_loss
+  kind: train
+  configs:
+  - configs/generated/self_correction/self_correction_s0/context__dfs_state__p15_full_loss.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__p15_masked
+  kind: train
+  configs:
+  - configs/generated/self_correction/self_correction_s0/context__dfs_state__p15_masked.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__p30_full_loss
+  kind: train
+  configs:
+  - configs/generated/self_correction/self_correction_s0/context__dfs_state__p30_full_loss.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__p30_masked
+  kind: train
+  configs:
+  - configs/generated/self_correction/self_correction_s0/context__dfs_state__p30_masked.yaml
+  set:
+    tracking.mode: disabled

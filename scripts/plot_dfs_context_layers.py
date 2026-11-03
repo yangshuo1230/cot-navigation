@@ -26,7 +26,7 @@ import plot_dfs_cot_attention as base  # noqa: E402
 from cot_navigation.analysis.common import records  # noqa: E402
 
 FIG = ROOT / "figures/scale_v1"
-JSON = ROOT / "research/block_membership_probe_20261021/dfs_context_attention_by_layer.json"
+JSON = ROOT / "studies/block_membership_probe/dfs_context_attention_by_layer.json"
 DEVICE = "cuda:0"
 RECEIVERS = ("Prompt bar", "Stack start", "First PUSH", "Later PUSH", "Terminal", "Answer")
 

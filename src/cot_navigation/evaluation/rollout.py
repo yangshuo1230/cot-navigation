@@ -10,6 +10,7 @@ absolute position less than or equal to its own.
 from __future__ import annotations
 
 import torch
+from typing import Callable
 
 from cot_navigation.models.transformer import TransformerLM
 from cot_navigation.protocols.tokenizer import Tokenizer
@@ -89,7 +90,9 @@ def _decode_step(model, cache, token_ids: torch.Tensor, precision: str, active=N
 def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
              tok: Tokenizer, precision: str = "fp32", *, filler_tokens: int = 0,
              max_new_tokens: int = 0, cot_margin: int = 0,
-             crop_cache: bool = True, compact_finished: bool = True) -> list[dict]:
+             crop_cache: bool = True, compact_finished: bool = True,
+             record_stop: Callable[[int, list[int]], bool] | None = None,
+             action_override: Callable[[int, list[int]], int | None] | None = None) -> list[dict]:
     """Greedy free generation; the first YES/NO terminates a response.
 
     By default exhausted context and EOS before an answer are failures. With
@@ -100,6 +103,9 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
 
     crop_cache and compact_finished skip unused keys and completed rows;
     disabling both retains the reference decode for numerical comparisons.
+    record_stop optionally ends an analysis prefix at a completed record. It
+    never edits sampled tokens or supplies an answer; default decoding is
+    unchanged. Such prefixes receive analysis_stopped=True, not a budget flag.
     """
     if not prompts:
         return []
@@ -138,7 +144,9 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
     pending_answer = [False] * len(prompts)
     forced_stop = [False] * len(prompts)
     interrupted = [False] * len(prompts)
+    analysis_stopped = [False] * len(prompts)
     last_record = [0] * len(prompts)
+    override_semicolon = [False] * len(prompts)
     if cot_margin and stop is None:
         raise ValueError('CoT interruption requires the opt-in STOP vocabulary')
     eos = tok.id("<EOS>")
@@ -167,6 +175,24 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
                     cache.lengths[local] = len(inputs[i]) + keep
                 pred = stop
                 forced_stop[i] = True
+            # Optional external oracle: completed record is inspected before
+            # its semicolon is consumed. Rewind only the action, overwrite its
+            # KV slots on subsequent decode, then resume model generation.
+            if action_override is not None and not pending_answer[i] and not forced_stop[i]:
+                if override_semicolon[i]:
+                    pred = tok.id(';')
+                    override_semicolon[i] = False
+                if pred == tok.id(';'):
+                    cut = action_override(i, traces[i] + [pred])
+                    if cut is not None:
+                        if not last_record[i] < cut <= len(traces[i]):
+                            raise ValueError('action override must retain current record fields')
+                        generated[i] = generated[i][:cut]
+                        traces[i] = traces[i][:cut]
+                        counts[i] = cut
+                        cache.lengths[local] = len(inputs[i]) + cut
+                        pred = tok.id('<MISTAKE>')
+                        override_semicolon[i] = True
             if cot_margin and pred == stop:
                 pending_answer[i] = True
                 interrupted[i] = True
@@ -185,6 +211,10 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
                 traces[i].append(pred)
                 if pred == tok.id(';'):
                     last_record[i] = len(traces[i])
+                    if record_stop is not None and record_stop(i, traces[i]):
+                        analysis_stopped[i] = True
+                        active[i] = False
+                        continue
                 if counts[i] >= caps[i]:
                     limits[i] = True
                     active[i] = False
@@ -215,4 +245,6 @@ def generate(model: TransformerLM, prompts: list[list[int]], protocol: str,
                         "cot_interrupted": interrupted[i], "forced_stop": forced_stop[i],
                         "answer_constrained": pending_answer[i],
                         "tokens": prompt + generated[i], "filler_prefill": protocol == "filler"})
+        if record_stop is not None:
+            results[-1]['analysis_stopped'] = analysis_stopped[i]
     return results

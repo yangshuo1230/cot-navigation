@@ -210,7 +210,7 @@ def test_retrain_plan_shared_parents_variants_and_dry_run(tmp_path, monkeypatch)
         if cfg.train.stage == "B":
             assert cfg.train.fixed_query_pool == "full" and cfg.train.one_hop_fraction == .25
         if cfg.train.stage != "A":
-            assert cfg.evaluation.final_checkpoints == ("best", "last")
+            assert cfg.evaluation.final_checkpoints == ("last",)
     monkeypatch.setattr(m.engine, "idle_gpus", lambda: [{"index": 0, "idle": True}])
     assert m.main(["--run-name", "unit", "--dry-run", "--background", "--output-root", str(tmp_path / "absent")]) == 0
     assert not output.parent.exists()

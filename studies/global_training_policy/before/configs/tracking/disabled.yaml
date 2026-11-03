@@ -1,0 +1,11 @@
+tracking:
+  mode: disabled
+  project: cot-graph-reasoning
+  entity: null
+  name: null
+  group: null
+  tags: []
+  notes: ""
+  online_failure: error
+  upload_artifacts: false
+  resume: allow

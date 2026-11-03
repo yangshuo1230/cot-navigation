@@ -1,0 +1,22 @@
+includes:
+  - ../data/smoke_parametric.yaml
+  - ../model/base.yaml
+  - ../protocol/smoke.yaml
+  - ../train/smoke.yaml
+  - ../tracking/disabled.yaml
+  - ../runtime.yaml
+output_dir: outputs/smoke/stage_b_direct
+protocol:
+  name: direct
+train:
+  stage: B
+  max_steps: 20
+  effective_query_batch_size: 4
+  walk_batch_size: 4
+  microbatch_size: 2
+data:
+  graph_shape: balanced
+  graph_seed: 0
+
+runtime:
+  smoke: true

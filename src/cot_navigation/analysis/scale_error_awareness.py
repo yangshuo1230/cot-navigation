@@ -297,7 +297,7 @@ def select_models(root, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output',type=Path,default=Path('research/scale_error_awareness_20261019/results'))
+    parser.add_argument('--output',type=Path,default=Path('studies/scale_error_awareness/results'))
     parser.add_argument('--train-pairs',type=int,default=8192)
     parser.add_argument('--val-pairs',type=int,default=2048)
     parser.add_argument('--test-pairs',type=int,default=4096)

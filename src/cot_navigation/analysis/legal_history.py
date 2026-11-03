@@ -77,9 +77,7 @@ def state_audit(ex,body,pred,tok,fifo):
 
 def other_audit(ex,body,pred,protocol,tok):
     """Node sequences are expansion orders, NOT adjacent-node paths."""
-    import sys
-    sys.path.insert(0,str(Path.cwd()/'research/scale_trace_audit_20261019'))
-    from legacy_trace_audit import validate_trace
+    from cot_navigation.protocols.trace_audit import validate_trace
     adj={ex.nodes[u]:[ex.nodes[v] for v in vs] for u,vs in enumerate(ex.adj)}
     result=validate_trace(body,pred,protocol,adj,ex.nodes[ex.source],ex.nodes[ex.target],tok,protocol=='path')
     return {'complete_valid':result['valid'],'first_error':None if result['valid'] else {'kind':result.get('error')},
@@ -259,13 +257,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--gpu',type=int,choices=range(1,8),required=True)
     parser.add_argument('--models',nargs='+',required=True)
-    parser.add_argument('--output',type=Path,default=Path('research/valid_history_20261019/results'))
+    parser.add_argument('--output',type=Path,default=Path('studies/valid_history/results'))
     args=parser.parse_args();os.environ['CUDA_VISIBLE_DEVICES']=f'0,{args.gpu}';os.environ['WANDB_MODE']='disabled'
     import torch
     from .scale_followup import make_adapter
     from .common import write_json,sha256
     torch.set_num_threads(3)
-    previous=Path('research/scale_mechanistic_20261019/results')
+    previous=Path('studies/scale_mechanistic/results')
     selection=json.loads((previous/'selection.json').read_text())
     for entry in selection['models']:
         name=entry['id']

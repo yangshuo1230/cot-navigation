@@ -15,8 +15,8 @@ import yaml
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT/'src'),str(ROOT/'scripts')]
-import train_first_round as engine
-from cot_navigation.config import load_config
+from cot_navigation.experiments import scheduler as engine
+from cot_navigation.config import load_config, apply_training_profile
 from cot_navigation.data.shards import atomic_json
 
 OLD=ROOT/'outputs/scale_v1/launches/scale_v1_s0/context/curriculum'
@@ -76,7 +76,7 @@ def build_jobs(args):
         for percent in (30,50):
             for weight in (1,16):
                 name=f'context/{protocol}/p{percent}_l{weight}'
-                cfg=yaml.safe_load(original.read_text())
+                cfg=apply_training_profile(yaml.safe_load(original.read_text()))
                 cfg['output_dir']=str(output/name)
                 cfg['protocol'].update(enable_mistake=True,mistake_source='natural',
                     mistake_rate=percent/100,mistake_mask_errors=False,mistake_seed=0,
@@ -89,6 +89,8 @@ def build_jobs(args):
                     tags=['natural_correction','simple_layered',protocol,f'p{percent}',f'lambda{weight}'],
                     notes='Observed greedy candidate fields from frozen clean donors on disjoint train/val/test graphs. Full loss, up to four observed errors per episode, original 4K curriculum.')
                 path=generated/(name.replace('/','__')+'.yaml')
+                if args.resume and path.exists():
+                    cfg = yaml.safe_load(path.read_text())
                 text=yaml.safe_dump(cfg,sort_keys=False,allow_unicode=True)
                 if path.exists() and path.read_text()!=text:raise ValueError(f'immutable config changed: {path}')
                 path.write_text(text);load_config([path])

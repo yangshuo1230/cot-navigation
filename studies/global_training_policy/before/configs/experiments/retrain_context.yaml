@@ -1,0 +1,19 @@
+includes:
+  - main_context.yaml
+output_dir: outputs/retrain_v3/context
+data:
+  root: data/retrain_v3/context_n16_m24_train150000_val10000_test10000_s0
+  splits: {train: 150000, val: 10000, test: 10000}
+  context_holdout_first: true
+train:
+  max_steps: 50000
+  eval_interval: 5000
+  save_interval: 5000
+  eval_samples: 256
+  free_gen_samples: 256
+evaluation:
+  batch_size: 16
+  test_samples: 0
+  final_checkpoints: [best, last]
+tracking:
+  tags: [retrain_v3, data_coverage]

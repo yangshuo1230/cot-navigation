@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How curr_source_timed_s0 reads a one-hop edge.
 
-Log: research/direct_learning_20261020, branch curr_source_timed_s0.
+Log: studies/direct_learning, branch curr_source_timed_s0.
 Stage 0 fixes the source on 16 names and 2 edges. Later stages release the
 query, then the node-name pool (16, 64, 256), then the edge count up to 24.
 latest.pt is the wall-budget checkpoint, step 1194957. Frozen inference only.
@@ -25,10 +25,10 @@ from cot_navigation.config import load_config  # noqa: E402
 from cot_navigation.models.transformer import build_model  # noqa: E402
 from cot_navigation.protocols.tokenizer import Tokenizer  # noqa: E402
 
-RUN = ROOT / "research/direct_learning_20261020/runs/direct_learning_20261020_v1/curr_source_timed_s0"
-DATA = ROOT / "research/direct_learning_20261020/data_v1/full_v256_m24.npz"
-FIG = ROOT / "figures/direct_learning_20261020/source_timed_layers.png"
-JSON = ROOT / "research/direct_learning_20261020/results_20261021/source_timed_layers.json"
+RUN = ROOT / "studies/direct_learning/runs/direct_learning_v1/curr_source_timed_s0"
+DATA = ROOT / "studies/direct_learning/data_v1/full_v256_m24.npz"
+FIG = ROOT / "figures/direct_learning/source_timed_layers.png"
+JSON = ROOT / "studies/direct_learning/results_20261021/source_timed_layers.json"
 DEVICE = "cuda:0"
 YES, NO = 6, 7
 N_LAYERS = 6

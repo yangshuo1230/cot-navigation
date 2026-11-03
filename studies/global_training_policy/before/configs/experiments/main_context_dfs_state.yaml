@@ -1,0 +1,5 @@
+includes:
+  - main_context.yaml
+output_dir: outputs/first_round_v2/context_dfs_state
+protocol:
+  name: dfs_state

@@ -27,7 +27,7 @@ from cot_navigation.protocols.tokenizer import Tokenizer  # noqa: E402
 
 SCALE = ROOT / "outputs/scale_v1/launches/scale_v1_s0/fixed"
 BLOCK = ROOT / "outputs/block_query_v1/launches/block_n100_s0"
-OUT = ROOT / "research/block_membership_probe_20261021"
+OUT = ROOT / "studies/block_membership_probe"
 FIG = ROOT / "figures/scale_v1/endpoint_layer_probe.png"
 PROTOCOLS = ["direct", "path", "dfs_state", "dfs_nodes", "bfs_state", "bfs_nodes"]
 PROTOCOL_LABELS = ["Direct", "Path", "DFS state", "DFS nodes", "BFS state", "BFS nodes"]

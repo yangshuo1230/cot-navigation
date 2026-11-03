@@ -26,7 +26,7 @@ import plot_dfs_cot_attention as base  # noqa: E402
 from cot_navigation.analysis.common import records  # noqa: E402
 
 OUT = ROOT / "figures/scale_v1/dfs_context_cot_scope.png"
-JSON = ROOT / "research/block_membership_probe_20261021/dfs_context_cot_scope.json"
+JSON = ROOT / "studies/block_membership_probe/dfs_context_cot_scope.json"
 DEVICE = "cuda:0"
 MIN_RECORDS = 12
 MAX_LEN = 2400

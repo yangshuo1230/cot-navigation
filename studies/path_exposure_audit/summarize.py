@@ -1,0 +1,40 @@
+from pathlib import Path
+import json
+HERE=Path(__file__).resolve().parent
+data={s:json.loads((HERE/f'{s}.json').read_text()) for s in ('simple','hard')}
+lines=['# PATH 完整路径曝光与匹配解释核查','',
+    '结论：旧N100基准的训练路径覆盖非常强，缓存路径存在则YES、否则NO的检索基线已接近模型整体分数。完整训练路径匹配不足以解释所有成功样本，但路径检索、局部片段拼接、固定图关系记忆仍未被排除。','',
+    '## 口径','',
+    '- 使用旧N100简单/困难图PATH验证最佳checkpoint所对应的数据与已保存自由生成。只读扫描，无GPU、模型前向、训练或缓存写入。',
+    '- 只扫原train query IDs的ScalePreparedRows路径变体，包括正例路径和负例随机路径，以及全部WALK语料；不把val/test路径当训练暴露。简单图训练还含反向查询，扫描也保留它们。',
+    '- 完整witness出现指起点到目标的连续路径，可为一个更长训练样本内部的连续子路径，不要求原查询prompt曾出现。所有扫描路径逐边核验真实图合法性。',
+    '- 这是允许采样的训练缓存覆盖，不是对best checkpoint之前优化器实际采样的精确重放。原批次没有本次严格曝光账本，不能声称每条缓存路径都实际进入过训练。',
+    '- 原始数据可能准备所有路径，但本审计只扫描训练实际使用的协议缓存变体：简单图4变体/查询，困难图正例缓存覆盖所有合法路径、负例4个随机变体。','',
+    '## 关键结果','',
+    '|指标|简单图|困难图|','|---|---:|---:|']
+items=[('测试可达正例','positive_queries'),('训练PATH可提供完整witness','positive_with_PATH_witness'),
+       ('训练WALK可提供完整witness','positive_with_WALK_witness'),('模型合法成功输出','valid_successful_outputs'),
+       ('成功输出整条路径曾在训练PATH出现','successful_exact_generated_PATH_seen'),
+       ('成功输出整条路径对PATH/WALK均为新','novel_successful_outputs'),
+       ('训练PATH变体数','training_cached_PATH_variants')]
+for label,key in items:lines.append('|'+label+'|'+'|'.join(str(d[key]) for d in data.values())+'|')
+for label,getter in [
+    ('PATH/WALK均无完整witness的正例',lambda d:str(d['strict_no_complete_witness']['n'])),
+    ('其中合法到达目标',lambda d:str(d['strict_no_complete_witness']['legal_success'])),
+    ('缓存witness存在则YES、否则NO：准确率',lambda d:f"{100*d['lookup_available_path_else_NO']['accuracy']:.2f}%"),
+    ('该检索基线与模型预测一致率',lambda d:f"{100*d['lookup_agreement_with_model']:.2f}%"),
+    ('模型原生答案准确率',lambda d:f"{100*d['model_answer_accuracy']:.2f}%"),
+    ('末节点等于目标则YES、否则NO：与模型一致率',lambda d:f"{100*d['final_node_equals_goal_rule']['agreement_with_model']:.2f}%")]:
+    lines.append('|'+label+'|'+'|'.join(getter(d) for d in data.values())+'|')
+lines+=['','## 如何理解用户提出的匹配机制','',
+    '最终答案这一部分，行为高度符合“轨迹最后是目标则YES，否则NO”；困难图完全一致，简单图99.54%一致。但这只是行为一致性，不是证明内部先默认YES再做匹配。',
+    '路径选择这一部分，目标条件路径检索、训练片段拼接都合理。仅凭合法到达率与有用后继偏好，不能排除这些解释，也不能证明通用搜索。',
+    '严格逐字整条训练路径检索不够：简单图38条、困难图14条成功整段路径对训练PATH/WALK均为新；其中15和6个查询连任意完整训练witness都没有，模型仍全部成功。这些可由片段组合或参数中的关系规则产生，样本不足以证明通用规划。',
+    '两个模型在这些严格未见witness查询中，初始(s,t)目标条件决策也不可能作为同目标训练路径状态出现；审计的“全部生成决策均见过”对该组计数都为0。完整witness可由其他局部关系组合推导，不意味着模型缺少相关图知识。',
+    '检索基线准确率与模型接近，不等于预测逐条相同：简单图97.25%、困难图98.20%一致。该基线把所有严格未见完整witness的正例判错，而模型在这组全部成功；模型也在另一些已有witness的查询上失败。','',
+    '## 后续区分性实验','',
+    '已有严格暴露R0/R2/R3设计适合继续检验：固定同一测试面板、所有局部边知识可用，禁止R0/R2训练样本包含任何测试完整witness，并分别记录完整路径与短片段暴露。另控制测试关键(current,target)决策是否在训练中出现。暴露应包含WALK、正/负PATH及所有可采样变体，并以实际训练采样账本为准。',
+    '需要把两件事分开：到达目标后的YES/NO格式输出，与到达之前的目标条件分支选择。可检查目标从未出现时是否仍输出YES、故意让轨迹进入死路是否只机械NO；死路干预的无效/分布外状态需另列，不能拿单路径失败作为不可达证明。','',
+    '数据与复现：simple.json/hard.json含checkpoint SHA256、严格新witness实例和检索计数；run.py只读扫描，summarize.py生成报告。没有新checkpoint或中间activation。','']
+(HERE/'REPORT.md').write_text('\n'.join(lines),encoding='utf-8')
+print(HERE/'REPORT.md')

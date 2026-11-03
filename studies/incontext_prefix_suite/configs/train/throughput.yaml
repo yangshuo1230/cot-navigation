@@ -1,0 +1,19 @@
+# Shared defaults for new trials; explicit later YAML/CLI values still win.
+train:
+  max_tokens_per_microbatch: 65536
+  max_padding_fraction: 0.30
+  compile_loss: true
+  log_interval: 100
+  eval_interval: 20000
+  free_eval_interval: 20000
+  save_interval: 10000
+evaluation:
+  free_batch_size: 64
+  free_max_cache_mb: 8192
+  free_max_prefill_tokens: 65536
+  compile_generation: true
+  test_samples: 256
+  final_checkpoints: [last]
+  extra_sets: []
+  extra_query_views: false
+  trace_diagnostics: false

@@ -43,14 +43,14 @@ def main():
     from cot_navigation.analysis.scale_followup import make_adapter,generate
     from cot_navigation.analysis.legal_history import state_audit
     from cot_navigation.analysis.common import sha256,write_json
-    sys.path.insert(0,str(Path.cwd()/'research/scale_trace_audit_20261019'))
+    sys.path.insert(0,str(Path.cwd()/'studies/scale_trace_audit'))
     from legacy_trace_audit import validate_nodes,validate_execution,self_test
     from cot_navigation.protocols.tokenizer import Tokenizer
     from cot_navigation.protocols.dfs import dfs_search
     from cot_navigation.protocols.bfs import bfs_search,first_expansion_order
     from cot_navigation.protocols.render import render_steps
     checks=self_test(Tokenizer(),dfs_search,bfs_search,render_steps,first_expansion_order)
-    output=Path('research/short3_trace_audit_20261020');output.mkdir(parents=True,exist_ok=True)
+    output=Path('studies/short3_trace_audit');output.mkdir(parents=True,exist_ok=True)
     for name in args.models:
         target=output/'models'/f'{name}.json'
         if target.exists() and json.loads(target.read_text()).get('complete'):continue

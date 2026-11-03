@@ -27,7 +27,7 @@ from cot_navigation.data.shards import load_npz  # noqa: E402
 from cot_navigation.protocols.render import context_prompt, render_task  # noqa: E402
 
 OUT = ROOT / "figures/scale_v1/dfs_context_larger_attention.png"
-JSON = ROOT / "research/block_membership_probe_20261021/dfs_context_larger_attention.json"
+JSON = ROOT / "studies/block_membership_probe/dfs_context_larger_attention.json"
 DEVICE = "cuda:0"
 SIZES = [
     ("6×6", ROOT / "data/scale_v1/context_l6w6_n36_m54_train50000_s0"),

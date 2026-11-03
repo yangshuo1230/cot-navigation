@@ -46,7 +46,7 @@ def tiny_config(root: Path):
                           microbatch_size=2, precision="fp32", eval_interval=0,
                           log_interval=1, bucket_multiple=8, warmup_steps=1),
         runtime=RuntimeConfig(device="cpu", fused_adamw="disabled"),
-        evaluation=EvaluationConfig(batch_size=2),
+        evaluation=EvaluationConfig(batch_size=2, free_batch_size=2, test_samples=0, trace_diagnostics=True),
     )
     cfg.validate()
     return cfg

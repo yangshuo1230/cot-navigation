@@ -98,7 +98,7 @@ def test_rollout_retention_is_opt_in(tmp_path, monkeypatch):
     t = object.__new__(Trainer)
     t.raw = model()
     t.device = torch.device('cpu')
-    t.cfg = SimpleNamespace(evaluation=EvaluationConfig(save_trace_tokens=True, trace_diagnostics=False),
+    t.cfg = SimpleNamespace(evaluation=EvaluationConfig(save_trace_tokens=True, trace_diagnostics=False, free_max_cache_mb=0),
         protocol=ProtocolConfig(name='dfs_state'), train=TrainConfig(precision='fp32'),
         data=SimpleNamespace(n_nodes=16))
     t.out, t.persist, t.completed, t.tok = tmp_path, True, 100, Tokenizer(16)

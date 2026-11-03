@@ -29,7 +29,7 @@ from cot_navigation.training.augmentation import random_path, with_body  # noqa:
 
 RUN = ROOT / "outputs/hard_dag_v1/launches/hard_dag_v1_s0/context/curriculum/path"
 FIG = ROOT / "figures/hard_dag_v1"
-JSON = ROOT / "research/block_membership_probe_20261021/path_dag_attention.json"
+JSON = ROOT / "studies/block_membership_probe/path_dag_attention.json"
 DEVICE = "cuda:0"
 COLUMNS = ["Query source", "Query target", "Graph", "Previous node", "Earlier path", "Self", "Other"]
 SIZES = [

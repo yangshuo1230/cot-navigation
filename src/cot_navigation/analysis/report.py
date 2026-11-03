@@ -269,7 +269,7 @@ def report(models, selection, out):
     lines.extend(f"- {f}" for f in findings)
     lines += ["", "具体变化案例最多每模型保留 8 个，包含 query ID、被改前缀、原始/干预生成结果；见相应 models/*.json 的 patching.interesting_examples。没有保存大规模 activation、完整注意力张量或额外模型 checkpoint。", "",
               "## 复现", "", "```bash", ".venv/bin/python scripts/analyze_mechanisms.py --gpu 0 --resume",
-              ".venv/bin/python -m cot_navigation.analysis.report --input research/mechanistic_20261018/results", "```", "",
+              ".venv/bin/python -m cot_navigation.analysis.report --input studies/mechanistic/results", "```", "",
               "脚本支持选择模型和分析阶段、调整样本数与探针迭代数。修改样本/方法配置时应指定新的 --output，避免混合旧结果。", "",
               "方法参考：[探针与控制任务](https://aclanthology.org/D19-1275/)、[patching 的指标与扰动方法](https://arxiv.org/abs/2309.16042)、[patching 结果解释](https://arxiv.org/abs/2404.15255)。"]
     index = lines.index("## 线性探针")

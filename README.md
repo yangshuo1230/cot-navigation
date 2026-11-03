@@ -1,3 +1,7 @@
+> **独立运行版已完成迁移**：请从 [docs/STANDALONE_MIGRATION.md](docs/STANDALONE_MIGRATION.md) 开始。运行入口不再依赖旧项目或 `research/` 档案；内核隔离测试记录见 `migration/standalone/`。
+
+> **统一框架版本**：本目录是原项目的独立副本。使用方法、架构与新旧接口对应见 [docs/FRAMEWORK_MIGRATION.md](docs/FRAMEWORK_MIGRATION.md)，验证见 [migration/VALIDATION.md](migration/VALIDATION.md)。
+
 # cot-navigation
 
 从零训练 causal Transformer，在 DAG 上判断起点到目标是否可达。支持 `direct`、`path`、`dfs_state`、`bfs_state`、`dfs_nodes`、`bfs_nodes`；主指标只看最终 YES/NO，错误轨迹不否决正确答案。当前探索入口见 `docs/research/EXPLORATIONS_V1.md`；此前数据覆盖与一跳监督重训见 `docs/research/RETRAIN_V3.md`。
@@ -253,3 +257,6 @@ online 失败按 online_failure 明确报错或明确降级，不声称已上传
 先查看计划：`bash scripts/retrain.sh --dry-run`；只准备数据：`bash scripts/retrain.sh --prepare-only`。
 完整参数、消融、W&B及best/last独立测试说明见[RETRAIN_V3.md](docs/research/RETRAIN_V3.md)。
 
+
+
+纠错模型行为分析统一使用[固定流程v1](studies/correction_behavior/PROTOCOL.md)，新增模型仅添加cohort manifest；入口为 `correction_behavior/run`，所有自然错误模块在同次生成中执行。

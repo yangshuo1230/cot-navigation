@@ -1,0 +1,13 @@
+version: 1
+run_name: context_protocols
+steps:
+  - name: train/${protocol}/seed${seed}
+    kind: train
+    configs: [configs/experiments/main_context.yaml, configs/train/throughput.yaml]
+    matrix:
+      protocol: [direct, path, dfs_state, bfs_state, dfs_nodes, bfs_nodes]
+      seed: [0]
+    set:
+      protocol.name: ${protocol}
+      train.model_seed: ${seed}
+      tracking.mode: disabled

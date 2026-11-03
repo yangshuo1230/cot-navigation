@@ -1,7 +1,7 @@
 # 训练吞吐优化
 
 2026-10-23 已应用到服务器 `/mnt/ningxuefei/yangshuo/cot-navigation`。
-本次优化不实现双路 attention，不启动8组结构实验，不改变课程步数、逻辑batch、样本分布或loss权重。
+本页记录共享训练器的吞吐优化；现已同步到普通 Transformer 和双路 attention 的各训练入口。课程步数、逻辑 batch、样本分布和 loss 权重不变。
 
 ## 实测
 
@@ -26,7 +26,7 @@
 - H2D仅传tokens和三个loss mask，不再搬运未参与训练计算的标签、长度等CPU元数据。
 - 日志loss汇总合并为一次小向量CPU传输，减少逐微批次的GPU同步。总loss继续记录实际反向传播目标，保留lambda和WALK加权。
 - 新增`update_time`、`end_to_end_tokens_per_s`、`gpu_reserved_mb`和验证`wall_time`，区分计算、渲染/汇总及评估时间。
-- 新增独立`train.free_eval_interval`；默认0保持原评估行为。显式使用throughput配置时，teacher-forced每5k、自由生成每10k、W&B每100步、保存每10k。
+- 新增独立`train.free_eval_interval`；默认 0 跟随 eval_interval；正式预设与 throughput 配置统一为 teacher-forced 和自由生成每 20k、W&B 每 100 步、checkpoint 每 10k。
 
 16k→64k并不意味着padding更低。朴素64k会把DFS padding从8.6%推到29.3%；长度约束将它压到20.4%，以少量padding换取更少微批次。BFS朴素64k为26.4%，约束后16.7%。
 实测继续扩大到128k/256k并没有更快，最严格5%长度约束也会产生过多小微批次。因此当前选择64k/30%，没有通过盲目占满80GB显存追求表面利用率。
@@ -49,7 +49,7 @@
   --dry-run
 ```
 
-throughput overlay不改变max_steps、学习率计划、数据、轨迹变体、逻辑batch、loss权重或最终测试覆盖；自由验证频率改变会改变best checkpoint候选集合。8组结构比较应统一使用同一评估配置。
+throughput overlay 不改变 max_steps、学习率计划、数据、轨迹变体、逻辑 batch 或 loss 权重。当前默认最终测试为 last checkpoint 的主测试集 256 条，best、额外尺度/OOD 测试和逐字段诊断按需开启。验证频率变化会改变 best checkpoint 候选集合；结构比较应统一评估设置。
 CUDA首次编译有额外开销，基准需预热；不同微批次和融合kernel不保证BF16位级复现。
 
 ## 验证

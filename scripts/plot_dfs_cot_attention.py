@@ -27,7 +27,7 @@ from cot_navigation.models.transformer import build_model  # noqa: E402
 from cot_navigation.protocols.tokenizer import Tokenizer  # noqa: E402
 
 OUT = ROOT / "figures/scale_v1/dfs_cot_attention_examples.png"
-JSON = ROOT / "research/block_membership_probe_20261021/dfs_cot_attention_examples.json"
+JSON = ROOT / "studies/block_membership_probe/dfs_cot_attention_examples.json"
 DEVICE = "cuda:0"
 COLUMNS = [
     "Query source",

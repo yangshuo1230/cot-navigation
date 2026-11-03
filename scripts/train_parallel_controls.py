@@ -13,6 +13,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import yaml
 
 ROOT=Path(__file__).resolve().parents[1]
 SHORT=ROOT/'outputs/fixed_short3_v1/launches/short3_n100_s0'
@@ -48,7 +49,12 @@ def completed(item):
     views=['','-reverse_short','-reverse_long'] if item['suite']=='short' else [
         '', '-within_short','-cross_short','-cross_long','-cross_unwitnessed_yes',
         '-reverse_cross','-cross_short_role_covered','-cross_unwitnessed_role_covered_yes']
-    return all((root/'eval'/f'free_test_{tag}{view}.json').exists() for tag in ['best','last'] for view in views)
+    cfg = yaml.safe_load((root/'resolved_config.yaml').read_text())
+    evaluation = cfg.get('evaluation', {})
+    if not evaluation.get('extra_query_views', True):
+        views = ['']
+    tags = evaluation.get('final_checkpoints', ['best', 'last'])
+    return all((root/'eval'/f'free_test_{tag}{view}.json').exists() for tag in tags for view in views)
 
 
 def main():

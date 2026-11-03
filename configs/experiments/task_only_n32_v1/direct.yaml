@@ -72,13 +72,14 @@ train:
   weight_decay: 0.01
   grad_clip: 1.0
   precision: bf16
-  eval_interval: 5000
-  save_interval: 5000
-  log_interval: 10
+  eval_interval: 20000
+  free_eval_interval: 20000
+  save_interval: 10000
+  log_interval: 100
   microbatch_size: 0
   bucket_multiple: 64
   pin_memory: true
-  max_tokens_per_microbatch: 16384
+  max_tokens_per_microbatch: 65536
   persist_outputs: true
   deterministic: false
   stage: B
@@ -146,12 +147,11 @@ runtime:
 evaluation:
   batch_size: 16
   seed: 1729
-  test_samples: 0
+  test_samples: 256
   max_new_tokens: 0
   fixed_query_view: full
   selection_metric: balanced_accuracy
   final_checkpoints:
-  - best
   - last
   extra_sets: []
   selection_min_step: 0

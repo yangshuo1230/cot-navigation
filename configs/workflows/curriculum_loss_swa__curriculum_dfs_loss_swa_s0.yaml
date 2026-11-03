@@ -1,0 +1,33 @@
+version: 1
+run_name: curriculum_loss_swa__curriculum_dfs_loss_swa_s0
+steps:
+- name: context__dfs_state__full_l1
+  kind: train
+  configs:
+  - configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__full_l1.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__full_l16
+  kind: train
+  configs:
+  - configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__full_l16.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__full_l4
+  kind: train
+  configs:
+  - configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__full_l4.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__swa1_l1
+  kind: train
+  configs:
+  - configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__swa1_l1.yaml
+  set:
+    tracking.mode: disabled
+- name: context__dfs_state__swa2_l1
+  kind: train
+  configs:
+  - configs/generated/curriculum_loss_swa/curriculum_dfs_loss_swa_s0/context__dfs_state__swa2_l1.yaml
+  set:
+    tracking.mode: disabled

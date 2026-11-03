@@ -7,7 +7,7 @@ from cot_navigation.analysis.common import sha256, write_json
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--output',type=Path,default=Path('research/scale_error_awareness_20261019/results'))
+    parser.add_argument('--output',type=Path,default=Path('studies/scale_error_awareness/results'))
     args=parser.parse_args()
     root=Path.cwd();out=args.output
     settings=json.loads((out/'settings.json').read_text())

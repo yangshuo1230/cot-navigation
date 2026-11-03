@@ -29,7 +29,7 @@ from cot_navigation.evaluation.rollout import generate  # noqa: E402
 from cot_navigation.protocols.validate_trace import parse_completed_steps  # noqa: E402
 
 OUT = ROOT / "figures/scale_v1/dfs_context_local_sequence_accuracy.png"
-JSON = ROOT / "research/block_membership_probe_20261021/dfs_context_local_sequence.json"
+JSON = ROOT / "studies/block_membership_probe/dfs_context_local_sequence.json"
 DEVICE = "cuda:0"
 FIELDS = ("stack", "visited", "cands", "action")
 

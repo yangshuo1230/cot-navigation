@@ -162,6 +162,8 @@ def trainer_type(policy):
         def _evaluate_final_checkpoints(self):
             import torch
             super()._evaluate_final_checkpoints()
+            if not self.cfg.evaluation.extra_query_views:
+                return
             try:
                 for tag in self.cfg.evaluation.final_checkpoints:
                     blob=torch.load(self.out/'checkpoints'/('latest.pt' if tag=='last' else 'best.pt'),map_location='cpu',weights_only=False)
@@ -178,7 +180,7 @@ def trainer_type(policy):
 def prepare(output,protocols=PROTOCOLS):
     import yaml
     import numpy as np
-    from cot_navigation.config import load_config
+    from cot_navigation.config import load_config, apply_training_profile
     from cot_navigation.data.dataset import ParametricWorld
     from cot_navigation.data.scale_prepared import ScalePreparedRows
     from cot_navigation.protocols.tokenizer import Tokenizer
@@ -199,14 +201,14 @@ def prepare(output,protocols=PROTOCOLS):
             if arm=='within_only':assert np.all(a['s_topo'][selected]//50==a['t_topo'][selected]//50)
         state=sampler.state_dict();expected=sampler.next();sampler.load_state_dict(state);assert sampler.next()==expected
     for protocol in protocols:
-        template=yaml.safe_load((ROOT/PREVIOUS/'configs'/f'short3_{protocol}.yaml').read_text())
+        template=apply_training_profile(yaml.safe_load((ROOT/PREVIOUS/'configs'/f'short3_{protocol}.yaml').read_text()))
         exposures={}
         for arm in ARMS:
             name=task_name(arm,protocol)
             c=copy.deepcopy(template);c['output_dir']=str(output/name)
             c['tracking'].update(name=f'block_n100_s0/{name}',group='block_n100_s0',variant=arm,
                 tags=['query_block_holdout','n100',protocol,arm],notes='Full WALK; two 5-layer blocks; matched per-gap/label/direction counts; validation within blocks only')
-            c['evaluation'].update(test_samples=10000)
+            c['evaluation'].update(test_samples=256)
             cfgpath=output/'configs'/(name.replace('/','_')+'.yaml')
             if cfgpath.exists():assert yaml.safe_load(cfgpath.read_text())==c
             else:cfgpath.write_text(yaml.safe_dump(c,sort_keys=False))
@@ -261,7 +263,7 @@ def main():
     args=parser.parse_args();os.chdir(ROOT)
     output=ROOT/'outputs/block_query_v1/launches/block_n100_s0';output.mkdir(parents=True,exist_ok=True)
     if args.run_one:
-        from cot_navigation.config import load_config
+        from cot_navigation.config import load_config, apply_training_profile
         policy=json.loads((output/'query_policy.json').read_text())
         cfg=load_config([output/'configs'/(args.run_one.replace('/','_')+'.yaml')])
         latest=Path(cfg.output_dir)/'checkpoints/latest.pt'

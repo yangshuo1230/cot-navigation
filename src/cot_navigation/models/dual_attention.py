@@ -62,7 +62,11 @@ class DualBlock(nn.Module):
             b = torch.arange(x.shape[0], device=x.device)[:, None]
             cache.k[layer_idx][b, 1, positions] = hk[:, 0]
             cache.v[layer_idx][b, 1, positions] = hv[:, 0]
-            end = cache.max_len if cache.valid_length is None else cache.valid_length
+            # SDPA selects different kernels for aligned/unaligned K lengths.
+            # Round the read view only; absolute-position masks exclude unused
+            # slots and STOP rewinds continue to overwrite their own positions.
+            valid = cache.max_len if cache.valid_length is None else cache.valid_length
+            end = min(cache.max_len, ((valid + 7) // 8) * 8)
             hk, hv = cache.k[layer_idx][:, 1:2, :end], cache.v[layer_idx][:, 1:2, :end]
         elif cache is not None:
             # Graph head is written below once the serial/parallel query is built.
@@ -84,7 +88,9 @@ class DualBlock(nn.Module):
             cache.k[layer_idx][b, 0, positions] = gk[:, 0]
             cache.v[layer_idx][b, 0, positions] = gv[:, 0]
         if decode:
-            size = min(end, self.graph_max_tokens)
+            # The immutable graph prefix fits this static bound. Using the
+            # history length here introduced another pair of decode graphs.
+            size = min(cache.max_len, self.graph_max_tokens)
             gk, gv = cache.k[layer_idx][:, 0:1, :size], cache.v[layer_idx][:, 0:1, :size]
         else:
             size = min(x.shape[1], self.graph_max_tokens)

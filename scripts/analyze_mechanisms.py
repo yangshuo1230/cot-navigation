@@ -15,7 +15,7 @@ import time
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--root", type=Path, default=Path.cwd())
-    p.add_argument("--output", type=Path, default=Path("research/mechanistic_20261018/results"))
+    p.add_argument("--output", type=Path, default=Path("studies/mechanistic/results"))
     p.add_argument("--gpu", default="0")
     p.add_argument("--models", nargs="*")
     p.add_argument("--stages", nargs="+", choices=["attention", "probes", "patching"], default=["attention", "probes", "patching"])

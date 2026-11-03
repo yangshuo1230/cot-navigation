@@ -1,0 +1,75 @@
+version: 1
+run_name: correction_reproduction__dfs_correction_repro_20261028
+steps:
+- name: correction_s0
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/correction_s0.yaml
+  set:
+    tracking.mode: disabled
+- name: correction_s1
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/correction_s1.yaml
+  set:
+    tracking.mode: disabled
+- name: correction_s2
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/correction_s2.yaml
+  set:
+    tracking.mode: disabled
+- name: correction_s3
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/correction_s3.yaml
+  set:
+    tracking.mode: disabled
+- name: matched_clean_s0
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/matched_clean_s0.yaml
+  set:
+    tracking.mode: disabled
+- name: matched_clean_s1
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/matched_clean_s1.yaml
+  set:
+    tracking.mode: disabled
+- name: matched_clean_s2
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/matched_clean_s2.yaml
+  set:
+    tracking.mode: disabled
+- name: matched_clean_s3
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/matched_clean_s3.yaml
+  set:
+    tracking.mode: disabled
+- name: original_clean_s0
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/original_clean_s0.yaml
+  set:
+    tracking.mode: disabled
+- name: original_clean_s1
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/original_clean_s1.yaml
+  set:
+    tracking.mode: disabled
+- name: original_clean_s2
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/original_clean_s2.yaml
+  set:
+    tracking.mode: disabled
+- name: original_clean_s3
+  kind: train
+  configs:
+  - configs/generated/correction_reproduction/dfs_correction_repro_20261028/original_clean_s3.yaml
+  set:
+    tracking.mode: disabled

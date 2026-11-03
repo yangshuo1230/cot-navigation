@@ -1,0 +1,5 @@
+includes:
+  - main_stage_b.yaml
+output_dir: outputs/first_round_v2/parametric/balanced_seed0/stage_b_path
+protocol:
+  name: path

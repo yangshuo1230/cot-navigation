@@ -9,9 +9,10 @@ train:
   weight_decay: 0.01
   grad_clip: 1.0
   precision: bf16
-  eval_interval: 1000
-  save_interval: 1000
-  log_interval: 10
+  eval_interval: 20000
+  free_eval_interval: 20000
+  save_interval: 10000
+  log_interval: 100
   microbatch_size: 0
   bucket_multiple: 64
   pin_memory: true

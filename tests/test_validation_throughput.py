@@ -78,3 +78,32 @@ def test_compiled_fp32_generation_matches_reference_with_mixed_prompt_lengths():
     reference=generate(model,prompts,'dfs_state',tok,'fp32',cot_margin=8)
     actual=generate(compiled,prompts,'dfs_state',tok,'fp32',cot_margin=8)
     assert actual==reference
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA compiled generation')
+def test_isolated_compiled_standard_decode_survives_long_history_and_rewind():
+    from cot_navigation.models.compiled_inference import CompiledInference
+    torch.manual_seed(27)
+    raw = TransformerLM(40, 2, 1, 16, 32, 512, attn_impl='sdpa').cuda().eval()
+    compiled = CompiledInference(raw)
+    # Long autoregressive growth formerly specialized on every history length.
+    # Include unequal batch sizes and STOP-style rewind, with stale future K/V.
+    with torch.no_grad():
+        for batch, length in [(3, 7), (2, 11), (1, 19)]:
+            prompt = torch.randint(3, 40, (batch, length), device='cuda')
+            cache = raw.new_cache(batch, 'cuda', torch.float32)
+            compiled(prompt, cache=cache, cache_mode='prefill')
+            for position in range(length, 180):
+                cache.valid_length = position + 1
+                token = torch.randint(3, 40, (batch, 1), device='cuda')
+                positions = torch.full((batch, 1), position, device='cuda')
+                actual = compiled(token, positions=positions, cache=cache, cache_mode='decode')
+                expected = raw(token, positions=positions, cache=cache, cache_mode='decode')
+                torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-4)
+            cache.valid_length = length + 1
+            token = torch.randint(3, 40, (batch, 1), device='cuda')
+            positions = torch.full((batch, 1), length, device='cuda')
+            torch.testing.assert_close(
+                compiled(token, positions=positions, cache=cache, cache_mode='decode'),
+                raw(token, positions=positions, cache=cache, cache_mode='decode'), atol=1e-5, rtol=1e-4)
+    assert not compiled.compile_fallbacks

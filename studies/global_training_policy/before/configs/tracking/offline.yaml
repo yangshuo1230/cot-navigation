@@ -1,0 +1,11 @@
+tracking:
+  mode: offline
+  project: cot-graph-reasoning
+  entity: null
+  name: null
+  group: smoke
+  tags: [smoke, offline]
+  notes: "offline smoke; sync later with wandb sync"
+  online_failure: offline
+  upload_artifacts: false
+  resume: allow

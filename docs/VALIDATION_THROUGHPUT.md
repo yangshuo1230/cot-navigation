@@ -1,7 +1,7 @@
 # 验证与最终评估吞吐优化
 
 2026-10-23，已应用到服务器 `/mnt/ningxuefei/yangshuo/cot-navigation`。
-未启动正式训练，也未启动双路 attention 的8组实验。
+本页记录共享评估器的吞吐优化；最新全局评估策略见下方。
 
 ## 完整预算实测
 
@@ -21,7 +21,7 @@
 1. **KV cache移行只复制有效前缀**。过去有样本结束时，会对每层整个32k分配区做`index_select`，复制未使用的未来区域。现在复用已有分配，只移动有效前缀。未来区域仍由因果mask排除，并在消费前被新K/V覆盖；保留STOP回退和记录历史。未提供有效边界的外部调用仍使用原全量路径。
 2. **自由生成独立批量**。新增`evaluation.free_batch_size`，与teacher-forced的`batch_size`独立；不改变查询选择、顺序、数量或标签。
 3. **缓存与prefill资源保护**。新增`free_max_cache_mb`和`free_max_prefill_tokens`。前者依据标准Transformer配置估算K/V容量，后者只根据输入prompt长度分批，不使用gold CoT长度；不丢查询、不缩短搜索。单个超长prompt仍单独执行。缓存预算不含编译workspace等额外内存，也不是通用模型的显存硬上限。
-4. **编译生成前向**。`compile_generation=true`时GPU使用动态形状`torch.compile`，复用同一个wrapper；best/last权重载入后读取新参数。CPU保持eager。默认配置关闭该选项，throughput overlay开启；目前不支持record-SWA与此选项组合。
+4. **编译生成前向**。`compile_generation=true`时GPU使用动态形状`torch.compile`，复用同一个wrapper；best/last权重载入后读取新参数。CPU保持eager。新配置默认在 CUDA full-attention 模型上开启，CPU 和 record-SWA 保留 eager；显式旧配置继续遵守原值。full、prefill、decode 使用独立编译入口，普通/双路模型均按 8 token 对齐历史读取范围，因果 mask 排除额外槽位，减少逐步重编译。
 5. **分项计时**。每次自由评估记录`generation_wall_time`、`diagnostics_wall_time`、`generation_batches`、`generation_batch_limit`、`compiled_generation`，以及已有总wall_time，便于后续判断真正的验证占比。
 
 同batch64、同编译方式的DFS短程对照中，仅改变KV移行策略：1.453→0.984秒，64条输出完全一致，峰值allocated约8.75→6.18GiB。大批量的内存代价由显式预算控制。
@@ -59,7 +59,7 @@ evaluation:
   compile_generation: true
 ```
 
-在实验配置后叠加此文件即可。原有每5k teacher-forced、每10k自由验证的节奏保持；本轮没有进一步减少验证频率、样本数量、最终best/last测试或额外测试集。训练batch、loss、数据、步数均未改变。
+在实验配置后叠加此文件即可。全局新默认为 teacher-forced 和自由生成每 20k 步；最终只测试 last checkpoint 的主测试集 256 条。best、额外尺度/OOD 和逐字段诊断均按需开启。若显式选择 best/last 且权重逐字节相同，最终评估只生成一次并保留两个标签的报告。训练 batch、loss、数据、步数不变，max_new_tokens=0 保持原搜索预算。
 
 只检查配置、不启动训练：
 

@@ -23,7 +23,7 @@ def test_legacy_checkpoint_and_new_vocab():
     assert len(tok) == 270 and tok.node_lo == 14
     extended = Tokenizer(enable_stop=True, world_tokens=15)
     assert tok.itos == extended.itos[:len(tok)]
-    folder = ROOT / 'research/minimal_query_smallgraph_20261017/runs/minimal_query_smallgraph_v1/direct_single'
+    folder = ROOT / 'studies/minimal_query_smallgraph/runs/minimal_query_smallgraph_v1/direct_single'
     if folder.exists():
         blob = torch.load(folder / 'checkpoints/latest.pt', map_location='cpu', weights_only=False)
         assert blob['arch']['vocab_hash'] == tok.hash()
@@ -149,7 +149,7 @@ def test_decode_budget_rollback_and_model_answer():
 
 
 def test_completion_requires_extra_reports(tmp_path, monkeypatch):
-    import train_first_round as engine
+    from cot_navigation.experiments import scheduler as engine
     cfgpath = ROOT / 'configs/experiments/retrain_context.yaml'
     job = SimpleNamespace(config=cfgpath, output=tmp_path, steps=50000,
                           overrides=['evaluation.extra_sets=["wide=data/test"]'])

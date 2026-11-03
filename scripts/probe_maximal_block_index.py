@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import probe_block_membership as base  # noqa: E402
 
-OUT = ROOT / "research/block_membership_probe_20261021/block_index.json"
+OUT = ROOT / "studies/block_membership_probe/block_index.json"
 GRAPH = ROOT / "data/scale_v1/fixed_l10w10_n100_m150_s0/main-seed0/graph.npz"
 DEVICE = "cuda:4"
 

@@ -6,7 +6,7 @@ from cot_navigation.analysis.common import sha256, write_json
 
 def main():
     root = Path.cwd()
-    out = root/'research/error_awareness_mlp_20261019/results'
+    out = root/'studies/error_awareness_mlp/results'
     settings = json.loads((out/'settings.json').read_text())
     entries = json.loads((out/'selection.json').read_text())['models']
     source = root/'src/cot_navigation/analysis/error_awareness.py'

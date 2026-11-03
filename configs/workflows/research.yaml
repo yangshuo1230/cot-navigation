@@ -1,0 +1,7 @@
+version: 1
+run_name: research_help
+steps:
+  - name: mechanisms_help
+    kind: research
+    script: scripts/analyze_mechanisms.py
+    args: [--help]

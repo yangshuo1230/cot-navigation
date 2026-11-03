@@ -1,0 +1,199 @@
+output_dir: /mnt/ningxuefei/yangshuo/cot-navigation/outputs/node_family_recheck_20261028/s0/dfs_nodes/simple
+data:
+  knowledge: context_graph
+  n_nodes: 100
+  n_edges: 150
+  shapes:
+    main:
+      layers: 10
+      width: 10
+  splits:
+    train: 50000
+    val: 512
+    test: 512
+  root: data/scale_v1/context_l10w10_n100_m150_train50000_s0
+  graph_family: layered
+  node_vocab: 256
+  data_seed: 0
+  graph_seeds:
+  - 0
+  - 1
+  - 2
+  max_attempts: 2000
+  workers: 8
+  chunk_size: 512
+  audit_fraction: 0.01
+  min_edge_coverage: 100
+  n_walks: 5000
+  walk_lengths:
+  - 1
+  - 2
+  - 3
+  - 4
+  query_ratios:
+  - 0.2
+  - 0.1
+  - 0.7
+  max_prepared_paths: 1000000
+  max_prepared_path_nodes: 20000000
+  graph_shape: main
+  graph_seed: null
+  include_one_hop_queries: false
+  context_holdout_first: true
+model:
+  architecture: standard
+  attention_order: parallel
+  graph_attention: causal
+  graph_max_tokens: 1024
+  layers: 6
+  heads: 1
+  d_model: 128
+  d_ff: 512
+  activation: gelu
+  position_encoding: rope
+  max_seq_len: 4096
+  tie_embeddings: true
+  dropout: 0.0
+  ffn: standard
+  attn_impl: sdpa
+  compile: true
+  compile_mode: default
+  rope_base: 10000.0
+  swa_records: 0
+  swa_backend: flex
+protocol:
+  name: dfs_nodes
+  filler_tokens: null
+  negative_random_path: false
+  random_search_order: true
+  cot_margin: 8
+  trajectory_variants: 4
+  enable_mistake: false
+  mistake_rate: 0.0
+  mistake_mask_errors: true
+  mistake_seed: 0
+  mistake_cache_root: data/mistake_v1
+  mistake_source: synthetic
+  natural_complex_share: 0.5
+train:
+  max_steps: 200000
+  effective_query_batch_size: 64
+  walk_batch_size: 16
+  lr: 0.001
+  min_lr: 0.0001
+  warmup_steps: 100
+  betas:
+  - 0.9
+  - 0.99
+  weight_decay: 0.01
+  grad_clip: 1.0
+  trace_loss_lambda: 1.0
+  precision: bf16
+  eval_interval: 20000
+  free_eval_interval: 20000
+  save_interval: 10000
+  log_interval: 100
+  microbatch_size: 0
+  bucket_multiple: 64
+  pin_memory: true
+  max_tokens_per_microbatch: 65536
+  max_padding_fraction: 0.3
+  compile_loss: true
+  persist_outputs: true
+  deterministic: false
+  stage: context
+  task_only: false
+  skip_knowledge_stage: false
+  exposure_seed: 0
+  keep_last: 1
+  eval_samples: 256
+  free_gen_samples: 256
+  model_seed: 0
+  fixed_query_pool: balanced
+  balance_query_labels: false
+  one_hop_fraction: 0.0
+  shuffle_context_edges: true
+  query_hops: all
+  curriculum_stage_steps: []
+  walk_loss_mode: fixed
+  walk_loss_weight: 1.0
+  walk_balance_decay: 0.98
+  scale_roots:
+  - data/scale_v1/context_l4w4_n16_m24_train50000_s0
+  - data/scale_v1/context_l4w6_n24_m36_train50000_s0
+  - data/scale_v1/context_l4w8_n32_m48_train50000_s0
+  - data/scale_v1/context_l6w6_n36_m54_train50000_s0
+  - data/scale_v1/context_l8w8_n64_m96_train50000_s0
+  - data/scale_v1/context_l10w10_n100_m150_train50000_s0
+  scale_weights: []
+  scale_stage_ends:
+  - 50000
+  - 100000
+  - 150000
+  - 200000
+  scale_stage_weights:
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.09999999999999999
+  - 0.09999999999999999
+  - 0.09999999999999999
+  - 0.7
+  - 0.0
+  - 0.0
+  - 0.075
+  - 0.075
+  - 0.075
+  - 0.075
+  - 0.7
+  - 0.0
+  - 0.06
+  - 0.06
+  - 0.06
+  - 0.06
+  - 0.06
+  - 0.7
+  scale_walk_weights: []
+  world_roots: []
+tracking:
+  mode: online
+  project: cot-graph-reasoning
+  entity: yangshuo1230-sjtu-hpc-center
+  name: s0/dfs_nodes/simple
+  group: node_family_recheck_20261028
+  tags:
+  - scale_v1
+  notes: Classic causal N16-36-64-100 curriculum; 50k each, 70percent current and
+    30percent smaller scales; independent family training; three model initializations.
+  variant: curriculum-dfs_nodes
+  online_failure: error
+  upload_artifacts: false
+  resume: allow
+runtime:
+  device: cuda
+  cuda_device: 0
+  probe_kernels: false
+  fused_adamw: auto
+  smoke: false
+evaluation:
+  batch_size: 64
+  free_batch_size: 64
+  free_max_cache_mb: 8192
+  free_max_prefill_tokens: 65536
+  compile_generation: true
+  mistake_samples: 0
+  seed: 1729
+  test_samples: 512
+  max_new_tokens: 0
+  fixed_query_view: balanced
+  selection_metric: answer_accuracy
+  final_checkpoints:
+  - last
+  extra_sets: []
+  extra_query_views: false
+  selection_min_step: 1000000
+  save_trace_tokens: true
+  trace_diagnostics: false

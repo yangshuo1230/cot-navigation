@@ -10,6 +10,7 @@ does not draw training RNGs.
 from __future__ import annotations
 
 import json
+import shutil
 import math
 import random
 import time
@@ -175,6 +176,10 @@ def _arch_snapshot(cfg: AppConfig, tok: Tokenizer, manifest_hash: str) -> dict:
 
 
 def _check_resume(saved: dict, current: dict) -> list[str]:
+    # Root relocation is not a dataset/objective change. Dataset hashes and all
+    # scientific fields below still have to match; no filesystem fallback.
+    from cot_navigation.runtime.workspace import relocate
+    saved, current = relocate(saved), relocate(current)
     for key, default in {"architecture": "standard", "attention_order": "parallel",
                          "graph_attention": "causal", "graph_max_tokens": 1024}.items():
         saved.setdefault(key, default)
@@ -208,6 +213,9 @@ def _check_resume(saved: dict, current: dict) -> list[str]:
                 allowed.append(f"max_steps {value} -> {current['max_steps']}")
             continue
         if current[key] != value:
+            if key in {'trace_diagnostics', 'extra_sets'}:
+                allowed.append(f"evaluation {key} updated")
+                continue
             raise TrainError(f"resume mismatch on {key}: checkpoint={value} config={current[key]}")
     return allowed
 
@@ -655,6 +663,7 @@ class Trainer:
             self.loss_balance_ema = [v.to(self.device) for v in blob["loss_balance_ema"]]
         restore_rng(blob["rng"])
         self.completed = int(blob["step"])
+        self._resuming = True
         self.run_id = blob["wandb_run_id"]
         self.parent_run_id = blob.get("parent_run_id")
         self.best_score = float(blob.get("best_score", -1.0))
@@ -668,6 +677,27 @@ class Trainer:
         cfg = self.cfg
         self.raw.train()
         last_metrics = {}
+        # A periodic checkpoint is committed before validation. If restart
+        # interrupted that validation, finish it before advancing training.
+        if getattr(self, "_resuming", False) and self.persist and self.completed > 0:
+            intervals = [("teacher_forced", cfg.train.eval_interval),
+                         ("free", cfg.train.free_eval_interval or cfg.train.eval_interval)]
+            refreshed = False
+            for kind, interval in intervals:
+                if not interval or self.completed % interval or cfg.train.stage == "A":
+                    continue
+                if kind == "free" and cfg.train.free_gen_samples <= 0:
+                    continue
+                path = self.out / "eval" / f"{kind}_{self.completed:08d}.json"
+                try:
+                    recorded_step = json.loads(path.read_text()).get("step")
+                except (OSError, ValueError):
+                    recorded_step = None
+                if recorded_step != self.completed:
+                    self._evaluate(kind=kind)
+                    refreshed = True
+            if refreshed:
+                self._save()
         while self.completed < cfg.train.max_steps:
             collect = (self.completed + 1) % cfg.train.log_interval == 0 or self.completed + 1 == cfg.train.max_steps
             metrics = self._update(collect_metrics=collect)
@@ -1098,6 +1128,40 @@ class Trainer:
             (self.store, self.world, self.prepared_tasks, self.prepared_walks,
              self._active_member, self.render_cache) = saved
 
+    def _reuse_final_reports(self, source: str, target: str, step: int) -> bool:
+        """Alias completed reports; both tags use the same weights/data/settings."""
+        suffixes = [''] + ['-' + spec.split('=', 1)[0]
+                           for spec in self.cfg.evaluation.extra_sets]
+        eval_dir = self.out / 'eval'
+        if not self.persist or not all((eval_dir / f'free_test_{source}{x}.json').exists()
+                                       for x in suffixes):
+            return False
+        for suffix in suffixes:
+            a, b = source + suffix, target + suffix
+            report = json.loads((eval_dir / f'free_test_{a}.json').read_text())
+            report.update(checkpoint_tag=b, checkpoint_step=step,
+                          training_step=self.completed, reused_from_checkpoint_tag=a)
+            for key in ('generation_wall_time', 'diagnostics_wall_time'):
+                if key in report:
+                    report['reused_' + key] = report[key]
+                    report[key] = 0.0
+            (eval_dir / f'free_test_{b}.json').write_text(json.dumps(report, indent=2) + '\n')
+            for directory, pattern in [('eval', 'predictions_test_{}.jsonl'),
+                                       ('traces', 'free_test_{}.txt')]:
+                original = self.out / directory / pattern.format(a)
+                if original.exists():
+                    shutil.copyfile(original, self.out / directory / pattern.format(b))
+            self.tracker.log(self.completed, {f'test/{b}/{k}': v
+                                             for k, v in _flatten_numbers(report).items()})
+        original = eval_dir / f'correction_test_{source}.json'
+        if original.exists():
+            report = json.loads(original.read_text())
+            report.update(reused_from_checkpoint_tag=source, step=self.completed)
+            (eval_dir / f'correction_test_{target}.json').write_text(json.dumps(report, indent=2) + '\n')
+            self.tracker.log(self.completed, {f'correction/{target}/{k}': v
+                                             for k, v in _flatten_numbers(report).items()})
+        return True
+
     def _evaluate_final_checkpoints(self):
         """Select on val, test once, and retain last weights and optimizer state.
 
@@ -1107,17 +1171,28 @@ class Trainer:
         tags = tuple(dict.fromkeys(self.cfg.evaluation.final_checkpoints))
         if self.scale_members:
             self._activate(self._primary_member())
+        evaluated = {}
         try:
             for tag in tags:
                 path = self.out / "checkpoints" / ("latest.pt" if tag == "last" else "best.pt")
                 if not path.exists():
                     raise TrainError(f"missing {tag} checkpoint for final evaluation; enable free validation/save")
                 blob = load_checkpoint(path, map_location="cpu")
-                self.raw.load_state_dict(blob["model"])
                 step = int(blob["step"])
+                digest = hashlib.sha256()
+                for name, value in sorted(blob["model"].items()):
+                    tensor = value.detach().cpu().contiguous()
+                    digest.update(str((name, tensor.dtype, tuple(tensor.shape))).encode())
+                    digest.update(tensor.reshape(-1).view(torch.uint8).numpy().tobytes())
+                fingerprint = digest.hexdigest()
+                source = evaluated.get(fingerprint)
+                if source is not None and self._reuse_final_reports(source, tag, step):
+                    continue
+                self.raw.load_state_dict(blob["model"])
                 self.evaluate_split("test", checkpoint_tag=tag, checkpoint_step=step)
                 for spec in self.cfg.evaluation.extra_sets:
                     self._evaluate_extra(tag, step, spec)
+                evaluated[fingerprint] = tag
         finally:
             latest = load_checkpoint(self.out / "checkpoints/latest.pt", map_location="cpu")
             self.raw.load_state_dict(latest["model"])
