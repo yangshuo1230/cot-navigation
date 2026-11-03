@@ -48,7 +48,7 @@
 !/studies/correction_all_positions_grid/token_matched_plan.json
 
 # Generated trees override the source extensions above (including copied code).
-data/
+/data/
 outputs/
 wandb/
 runs/
